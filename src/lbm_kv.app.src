@@ -1,0 +1,17 @@
+{application, lbm_kv,
+ [{description, "."},
+  {id, "A distributed Mnesia-based key value store."},
+  {vsn, "1.0.0"},
+  {registered,
+   [
+    lbm_kv_mon
+   ]},
+  {applications,
+   [
+    kernel,
+    stdlib,
+    sasl,
+    mnesia
+   ]},
+  {mod, {lbm_kv, []}},
+  {env, []}]}.
