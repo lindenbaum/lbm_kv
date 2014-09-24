@@ -9,7 +9,7 @@
 %%% @copyright (C) 2014, Lindenbaum GmbH
 %%%
 %%% @doc
-%%% An unregistered server that dynamically adds copies of the Mnesia `schema'
+%%% A registered server that dynamically adds copies of the Mnesia `schema'
 %%% to connected nodes. The server also subscribes for Mnesia system events. In
 %%% case a DB inconsistency is detected (split brain) the server tries to
 %%% resolve the conflict by calling the table module's `resolve_conflict/1'
