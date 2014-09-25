@@ -196,7 +196,9 @@ update_all(Table, Fun) when is_function(Fun) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Subscribe the caller for Mnesia events concerning the given table.
+%% Subscribe the caller for Mnesia events concerning the given table. The caller
+%% must be prepared to receive messages of the form
+%% `{mnesia_table_event, Event}'.
 %% @end
 %%------------------------------------------------------------------------------
 -spec subscribe(table()) -> ok | {error, term()}.
