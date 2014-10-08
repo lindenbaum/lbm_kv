@@ -43,10 +43,10 @@ research on its own, `lbm_kv` provides only the simplest of all mechanisms.
 
 If Mnesia detects a DB inconsistency, `lbm_kv` will check whether one of its
 tables/stores is affected. If this is the case `lbm_kv` will deterministically
-_restart_ one of the offending nodes using `init:restart/0` (you can look at
+__restart__ one of the offending nodes using `init:restart/0` (you can look at
 the exact condition in `lbm_kv_mon:default_resolve_conflict/1`). Of course, this
 may not be the desired behaviour for all use-cases. Therefore, `lbm_kv` offers
 the possibility to change this (on a per table basis). To implement a custom
 conflict resolver for a table `Table`, create a module `Table` that implements
-the `lbm_kv` behaviour. However, be aware that _if only one table exists without
-custom conflict resolver_ a node may get restarted anyway!
+the `lbm_kv` behaviour. However, be aware that __if only one table exists
+without custom conflict resolver__ a node may get restarted anyway!
