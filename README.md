@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/lindenbaum/lbm_kv.png?branch=master)](https://travis-ci.org/lindenbaum/lbm_kv)
+
 lbm_kv
 ======
 
