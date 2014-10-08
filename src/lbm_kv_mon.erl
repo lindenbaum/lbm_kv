@@ -144,8 +144,22 @@ handle_mnesia_event(_Event, _State) ->
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Handle node events and distribute mnesia automatically across the cluster.
 %%------------------------------------------------------------------------------
 handle_node_event({nodeup, Node}, State = #state{nodes = Nodes}) ->
+    %% IMPORTANT:
+    %%
+    %% From the Mnesia documentation: This function shall only be used to connect to
+    %% newly started ram nodes (N.D.R.S.N.) with an empty schema. If for example it
+    %% is used after the network have been partitioned it may lead to inconsistent
+    %% tables.
+    %%
+    %% If you decide to use disk_copies this will most probably not work for
+    %% you. Additionally (also when using RAM copies only), prepare to handle
+    %% netsplits for your table because this is the point triggering the
+    %% inconsistent DB messages after netsplits have been detected.
+    %% Nevertheless, there is no other possibility to distribute Mnesia over a
+    %% dynamic cluster environment than this.
     mnesia:change_config(extra_db_nodes, [Node | Nodes]),
     State#state{nodes = [Node | Nodes]};
 handle_node_event({nodedown, Node}, State = #state{nodes = Nodes}) ->
