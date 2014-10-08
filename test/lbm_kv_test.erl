@@ -46,7 +46,7 @@ all_test_() ->
      [
       fun bad_type/0,
       fun empty/0,
-      fun put_and_get/0,
+      fun put_get_and_del/0,
       fun update/0,
       fun update_all/0,
       fun integration/0,
@@ -66,7 +66,7 @@ empty() ->
     ?assertEqual([], lbm_kv:get(?TABLE, key)),
     ?assertEqual([], lbm_kv:get_all(?TABLE)).
 
-put_and_get() ->
+put_get_and_del() ->
     qc(?FORALL(
           {Key, Value},
           {safe(), safe()},
@@ -74,6 +74,7 @@ put_and_get() ->
               ?assertEqual(ok, lbm_kv:put(?TABLE, Key, Value)),
               ?assertEqual([Value], lbm_kv:get(?TABLE, Key)),
               ?assert(lists:member({Key, Value}, lbm_kv:get_all(?TABLE))),
+              ?assertEqual({ok, [Value]}, lbm_kv:del(?TABLE, Key)),
               true
           end)).
 
@@ -179,7 +180,12 @@ integration() ->
     Update4 = fun([]) -> [value] end,
     ?assertEqual({ok, [value]}, lbm_kv:update(?TABLE, key, Update4)),
     ?assertEqual([value], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([{key, value}], lbm_kv:get_all(?TABLE)).
+    ?assertEqual([{key, value}], lbm_kv:get_all(?TABLE)),
+
+    %% del key => value
+    ?assertEqual({ok, [value]}, lbm_kv:del(?TABLE, key)),
+    ?assertEqual([], lbm_kv:get(?TABLE, key)),
+    ?assertEqual([], lbm_kv:get_all(?TABLE)).
 
 distributed() ->
     process_flag(trap_exit, true),
@@ -211,7 +217,7 @@ distributed() ->
     ?assertEqual(ok, slave_execute(Slave3, GetAll)),
 
     %% Delete the value from a slave node
-    Update = fun() -> lbm_kv:update(?TABLE, key, fun([value]) -> [] end) end,
+    Update = fun() -> lbm_kv:del(?TABLE, key) end,
     ?assertEqual(ok, slave_execute(Slave1, Update)),
 
     %% Read the update from all nodes

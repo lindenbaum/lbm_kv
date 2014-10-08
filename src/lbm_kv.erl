@@ -47,6 +47,7 @@
 -export([create/1,
          replicate_to/2,
          put/3,
+         del/2,
          get/2,
          get/3,
          get_all/1,
@@ -134,6 +135,17 @@ put(Table, Key, Value) -> do(fun() -> w(Table, Key, Value) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
+%% Deletes all values for a key from a table. Previous values for key will be
+%% returned.
+%%
+%% It is not necessary to have a local RAM copy to call this function.
+%% @end
+%%------------------------------------------------------------------------------
+-spec del(table(), key()) -> {ok, [value()]} | {error, term()}.
+del(Table, Key) -> do(fun() -> {ok, r_and_d(Table, Key)} end).
+
+%%------------------------------------------------------------------------------
+%% @doc
 %% Similar to {@link get/3} with `Type' set to transaction.
 %% @end
 %%------------------------------------------------------------------------------
@@ -187,7 +199,7 @@ get_all(Table) -> do(fun() -> r_all(Table, read) end).
 update(Table, Key, Fun) when is_function(Fun) ->
     do(fun() ->
                Values = r(Table, Key, write),
-               {ok, w_and_d(Table, Key, Values, Fun(Values))}
+               {ok, d_and_w(Table, Key, Values, Fun(Values))}
        end).
 
 %%------------------------------------------------------------------------------
@@ -345,12 +357,22 @@ d(Tab, Key, Val) -> mnesia:delete_object({Tab, Key, Val}).
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Read all mappings for `Key' in `Tab', delete them and return the previous
+%% mappings.
+%%------------------------------------------------------------------------------
+r_and_d(Tab, Key) ->
+    Values = r(Tab, Key, write),
+    ok = mnesia:delete({Tab, Key}),
+    Values.
+
+%%------------------------------------------------------------------------------
+%% @private
 %% Delete all mappings from `Key' to `Vals' and establish the new mappings `Key'
 %% to `NewVals', only allowed within transaction context.
 %%------------------------------------------------------------------------------
-w_and_d(_Tab, _Key, Vals, Vals) ->
+d_and_w(_Tab, _Key, Vals, Vals) ->
     Vals;
-w_and_d(Tab, Key, Vals, NewVals) ->
+d_and_w(Tab, Key, Vals, NewVals) ->
     [d(Tab, Key, Val) || Val <- Vals -- NewVals],
     [w(Tab, Key, Val) || Val <- NewVals -- Vals],
     NewVals.
