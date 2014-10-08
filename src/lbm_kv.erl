@@ -3,17 +3,26 @@
 %%%               |  o __   _|  _  __  |_   _       _ _   (TM)
 %%%               |_ | | | (_| (/_ | | |_) (_| |_| | | |
 %%%
-%%% @author Sven Heyll <sven.heyll@lindenbaum.eu>
-%%% @author Tobias Schlager <tobias.schlager@lindenbaum.eu>
-%%% @author Timo Koepke <timo.koepke@lindenbaum.eu>
 %%% @copyright (C) 2014, Lindenbaum GmbH
+%%%
+%%% Permission to use, copy, modify, and/or distribute this software for any
+%%% purpose with or without fee is hereby granted, provided that the above
+%%% copyright notice and this permission notice appear in all copies.
+%%%
+%%% THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+%%% WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+%%% MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+%%% ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+%%% WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+%%% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+%%% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 %%%
 %%% @doc
 %%% Provides simple, Mnesia-based, distributed key value tables. When started,
 %%% this application distributes Mnesia over all dynamically connected nodes.
 %%%
-%%% All tables created have key/value semantic (after all its still Mnesia).
-%%% A new key/value table can be created locally using {@link create/1}. Another
+%%% All tables created, have key/value semantic (after all its still Mnesia).
+%%% A new key-value-table can be created locally using {@link create/1}. Another
 %%% way to distribute RAM copies of a table is to replicate the table explicitly
 %%% using {@link replicate_to/2}.
 %%%
@@ -23,7 +32,9 @@
 %%%
 %%% To be able to use `lbm_kv' none of the connected nodes is allowed to have
 %%% `disk_copies' of its `schema' table, because Mnesia will fail to merge
-%%% schemas on disk nodes (which means that it is likely they can't participate).
+%%% schemas on disk nodes (which means that it is likely they can't
+%%% participate). If you need `disk_copies' (it can be brought to work) you're
+%%% on your own here.
 %%% @end
 %%%=============================================================================
 
@@ -52,7 +63,13 @@
 
 -type table() :: atom().
 -type key()   :: term().
+%% Unfortunately, Mnesia is quite picky when it comes to allowed types for
+%% keys, e.g. all special atoms of `match_specs' are not allowed and lead to
+%% undefined behaviour when used.
 -type value() :: term().
+%% Unfortunately, Mnesia is quite picky when it comes to allowed types for
+%% values, e.g. all special atoms of `match_specs' are not allowed and lead to
+%% undefined behaviour when used.
 
 -export_type([table/0, key/0, value/0]).
 
@@ -246,6 +263,7 @@ spec(M, As) -> {M, {M, start_link, As}, permanent, 1000, worker, [M]}.
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Add a RAM copy of a certain table on a certain node.
 %%------------------------------------------------------------------------------
 add_table_copy(Table, Node) ->
     case mnesia:add_table_copy(Table, Node, ram_copies) of
@@ -259,6 +277,7 @@ add_table_copy(Table, Node) ->
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Blocks the calling process until a certain table is available to this node.
 %%------------------------------------------------------------------------------
 await_table(Table, Node) ->
     Timeout = application:get_env(?MODULE, wait_timeout, 10000),
@@ -273,6 +292,8 @@ await_table(Table, Node) ->
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Subscribe or unsubscribe the caller for `simple' Mnesia table events
+%% regarding a certain table.
 %%------------------------------------------------------------------------------
 manage_subscription(Table, Action) ->
     case mnesia:Action({table, Table, simple}) of
@@ -296,13 +317,13 @@ do(Fun) ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% only allowed within transaction context
+%% Read `Key' from `Tab', only allowed within transaction context.
 %%------------------------------------------------------------------------------
 r(Tab, Key, Lock) -> [Val || {_, _, Val} <- mnesia:read(Tab, Key, Lock)].
 
 %%------------------------------------------------------------------------------
 %% @private
-%% only allowed within transaction context
+%% Read everything from `Tab', only allowed within transaction context.
 %%------------------------------------------------------------------------------
 r_all(Tab, Lock) ->
     Spec = [{{Tab, '_', '_'}, [], ['$_']}],
@@ -310,19 +331,22 @@ r_all(Tab, Lock) ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% only allowed within transaction context
+%% Establish mapping `Key' to `Val'in `Tab', only allowed within transaction
+%% context.
 %%------------------------------------------------------------------------------
 w(Tab, Key, Val) -> mnesia:write({Tab, Key, Val}).
 
 %%------------------------------------------------------------------------------
 %% @private
-%% only allowed within transaction context
+%% Delete mapping `Key' to `Val' from `Tab' (if any), only allowed within
+%% transaction context.
 %%------------------------------------------------------------------------------
 d(Tab, Key, Val) -> mnesia:delete_object({Tab, Key, Val}).
 
 %%------------------------------------------------------------------------------
 %% @private
-%% only allowed within transaction context
+%% Delete all mappings from `Key' to `Vals' and establish the new mappings `Key'
+%% to `NewVals', only allowed within transaction context.
 %%------------------------------------------------------------------------------
 w_and_d(_Tab, _Key, Vals, Vals) ->
     Vals;
@@ -333,7 +357,9 @@ w_and_d(Tab, Key, Vals, NewVals) ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% only allowed within transaction context
+%% Either replace the mapping `Key' to `Val' with `NewVal' (if `{ok, NewVal}' is
+%% passed) or delete the mapping from `Key' to `Val', only allowed within
+%% transaction context.
 %%------------------------------------------------------------------------------
 w_or_d(_Tab, _Key, Val, {ok, Val}) ->
     [Val];

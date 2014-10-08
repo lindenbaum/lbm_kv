@@ -3,10 +3,19 @@
 %%%               |  o __   _|  _  __  |_   _       _ _   (TM)
 %%%               |_ | | | (_| (/_ | | |_) (_| |_| | | |
 %%%
-%%% @author Sven Heyll <sven.heyll@lindenbaum.eu>
-%%% @author Tobias Schlager <tobias.schlager@lindenbaum.eu>
-%%% @author Timo Koepke <timo.koepke@lindenbaum.eu>
 %%% @copyright (C) 2014, Lindenbaum GmbH
+%%%
+%%% Permission to use, copy, modify, and/or distribute this software for any
+%%% purpose with or without fee is hereby granted, provided that the above
+%%% copyright notice and this permission notice appear in all copies.
+%%%
+%%% THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+%%% WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+%%% MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+%%% ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+%%% WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+%%% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+%%% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 %%%
 %%% @doc
 %%% A registered server that dynamically adds copies of the Mnesia `schema'
@@ -120,6 +129,9 @@ terminate(_Reason, _State) -> ok.
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Handle Mnesia system events. Fatal conditions will be resolved with node
+%% restart. Inconsistent database states will be delegated to table specific
+%% handlers (if any).
 %%------------------------------------------------------------------------------
 handle_mnesia_event({inconsistent_database, _Context, Node}, State) ->
     [resolve_conflict(Node, Table) || Table <- conflicting_tables(State)];
@@ -142,6 +154,7 @@ handle_node_event({nodedown, Node}, State = #state{nodes = Nodes}) ->
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Return all `lbm_kv' tables with local RAM copies.
 %%------------------------------------------------------------------------------
 conflicting_tables(#state{tables = Tables}) ->
     LocalTables = mnesia:table_info(schema, local_tables),
@@ -149,6 +162,9 @@ conflicting_tables(#state{tables = Tables}) ->
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Call the conflict handler for a table along with the offending node. If no
+%% conflict handler is found (exported function `resolve_conflict/1') the
+%% default conflict handler is invoked.
 %%------------------------------------------------------------------------------
 resolve_conflict(Node, Table) ->
     case code:ensure_loaded(Table) of
@@ -165,6 +181,9 @@ resolve_conflict(Node, Table) ->
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Default conflict resolver for inconsistent database states, e.g. after
+%% netsplits. This will compare the local node with the offending node with
+%% {@link erlang:'>'/2} and restart the greater node.
 %%------------------------------------------------------------------------------
 default_resolve_conflict(Node) ->
     case node() > Node of

@@ -2,3 +2,4 @@
 .rebar
 ebin
 deps
+doc
