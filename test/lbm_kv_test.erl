@@ -36,6 +36,7 @@
 %% lead to undefined behaviour when used.
 
 -define(TABLE, table).
+-define(NODE, master).
 
 %%%=============================================================================
 %%% TESTS
@@ -253,7 +254,7 @@ distributed() ->
 %%------------------------------------------------------------------------------
 setup() ->
     fun() ->
-            ok = distribute(master),
+            ok = distribute(?NODE),
             {ok, Apps} = application:ensure_all_started(lbm_kv),
             ok = lbm_kv:create(?TABLE),
             ok = lbm_kv:replicate_to(?TABLE, node()),
@@ -273,6 +274,7 @@ teardown() ->
 %% Make this node a distributed node.
 %%------------------------------------------------------------------------------
 distribute(Name) ->
+    os:cmd("epmd -daemon"),
     case net_kernel:start([Name]) of
         {ok, _}                       -> ok;
         {error, {already_started, _}} -> ok;
