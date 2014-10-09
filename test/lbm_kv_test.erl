@@ -51,7 +51,8 @@ all_test_() ->
       fun update/0,
       fun update_all/0,
       fun integration/0,
-      fun distributed/0
+      fun distributed/0,
+      fun netsplit/0
      ]}.
 
 bad_type() ->
@@ -245,6 +246,34 @@ distributed() ->
 
     ok.
 
+netsplit() ->
+    process_flag(trap_exit, true),
+
+    %% start slave nodes with local replica of table
+    {ok, Slave1} = slave_setup(slave1),
+    {ok, Slave2} = slave_setup(slave2),
+    ok = lbm_kv:replicate_to(?TABLE, Slave1),
+    ok = lbm_kv:replicate_to(?TABLE, Slave2),
+
+    %% start slave node without local replica of table
+    {ok, Slave3} = slave_setup(slave3),
+
+    ok = net_kernel:monitor_nodes(true),
+
+    %% simualte netsplit between Slave1 and Slave2, Slave3
+    Netsplit = fun() ->
+                       true = net_kernel:disconnect(Slave2),
+                       true = net_kernel:disconnect(Slave3),
+                       true = net_kernel:connect(Slave2),
+                       true = net_kernel:connect(Slave3)
+               end,
+    ok = slave_execute(Slave1, Netsplit),
+
+    %% Expect that Slave2 gets restarted by the default conflict resolver.
+    %% Unfortunately, slave nodes cannot be restarted using init:restart/1,
+    %% so we cannot test actual recovery.
+    receive {nodedown, Slave2} -> ok end.
+
 %%%=============================================================================
 %%% Internal functions
 %%%=============================================================================
@@ -288,12 +317,19 @@ distribute(Name) ->
 slave_setup(Name) ->
     {ok, Node} = slave:start_link(hostname(), Name),
     true = lists:member(Node, nodes()),
+    slave_setup_env(Node),
+    {ok, Node}.
+
+%%------------------------------------------------------------------------------
+%% @private
+%% Setup the slave node environment (code path, applications, ...).
+%%------------------------------------------------------------------------------
+slave_setup_env(Node) ->
     Paths = code:get_path(),
     PathFun = fun() -> [code:add_patha(P)|| P <- Paths] end,
     ok = slave_execute(Node, PathFun),
     AppFun = fun() -> {ok, _} = application:ensure_all_started(lbm_kv) end,
-    ok = slave_execute(Node, AppFun),
-    {ok, Node}.
+    ok = slave_execute(Node, AppFun).
 
 %%------------------------------------------------------------------------------
 %% @private

@@ -202,7 +202,8 @@ resolve_conflict(Node, Table) ->
 default_resolve_conflict(Node) ->
     case node() > Node of
         true ->
-            ?ERR("NETSPLIT DETECTED (restarting ~p to resolve)", [node()]),
+            ?ERR("NETSPLIT DETECTED (offender ~p, restarting ~p to resolve)",
+                 [Node, node()]),
             init:restart();
         _ ->
             ok
