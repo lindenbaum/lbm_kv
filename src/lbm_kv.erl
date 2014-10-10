@@ -47,14 +47,14 @@
 -export([create/1,
          replicate_to/2,
          put/3,
+         put/2,
+         del/3,
          del/2,
          get/2,
          get/3,
          get_all/1,
          update/3,
-         update_all/2,
-         subscribe/1,
-         unsubscribe/1]).
+         update_all/2]).
 
 %% Application callbacks
 -export([start/2, stop/1]).
@@ -73,6 +73,8 @@
 %% undefined behaviour when used.
 
 -export_type([table/0, key/0, value/0]).
+
+-define(join(LofLs), lists:append(LofLs)).
 
 %%%=============================================================================
 %%% Behaviour
@@ -124,32 +126,61 @@ replicate_to(Table, Node) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Puts a key value pair into a table. Previous values for key will be
-%% overridden.
+%% Puts a key value pair into a table returning the previous mappings. In case
+%% of table type `set' the previous mapping will be overridden if existed.
 %%
 %% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
--spec put(table(), key(), value()) -> ok | {error, term()}.
-put(Table, Key, Value) -> do(fun() -> w(Table, Key, Value) end).
+-spec put(table(), key(), value()) -> [{key(), value()}] | {error, term()}.
+put(Table, Key, Value) -> ?MODULE:put(Table, [{Key, Value}]).
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Deletes all values for a key from a table. Previous values for key will be
-%% returned.
+%% Puts multiple key value pairs into a table returning the previous mappings.
+%% In case of table type `set' all previous mappings will be overridden.
 %%
 %% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
--spec del(table(), key()) -> {ok, [value()]} | {error, term()}.
-del(Table, Key) -> do(fun() -> {ok, r_and_d(Table, Key)} end).
+-spec put(table(), [{key(), value()}]) -> [{key(), value()}] | {error, term()}.
+put(_Table, []) ->
+    [];
+put(Table, KeyValues) when is_list(KeyValues) ->
+    do(fun() -> ?join([r_and_w_all(Table, K, V) || {K, V} <- KeyValues]) end).
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Deletes the mapping from `Key' to `Val' from a table. If the mapping existed
+%% it will be returned in a list, if the mapping did not exist, the empty list
+%% is returned.
+%%
+%% It is not necessary to have a local RAM copy to call this function.
+%% @end
+%%------------------------------------------------------------------------------
+-spec del(table(), key(), value()) -> [{key(), value()}] | {error, term()}.
+del(Table, Key, Value) -> do(fun() -> r_and_d_exact(Table, Key, Value) end).
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Deletes all values for the given list of keys from a table. Previous values
+%% for the keys will be returned.
+%%
+%% It is not necessary to have a local RAM copy to call this function.
+%% @end
+%%------------------------------------------------------------------------------
+-spec del(table(), [key()]) -> [{key(), value()}] | {error, term()}.
+del(_Table, []) ->
+    [];
+del(Table, Keys) when is_list(Keys) ->
+    do(fun() -> ?join([r_and_d_all(Table, K) || K <- Keys]) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
 %% Similar to {@link get/3} with `Type' set to transaction.
 %% @end
 %%------------------------------------------------------------------------------
--spec get(table(), key()) -> [value()] | {error, term()}.
+-spec get(table(), key()) -> [{key(), value()}] | {error, term()}.
 get(Table, Key) -> get(Table, Key, transaction).
 
 %%------------------------------------------------------------------------------
@@ -160,11 +191,10 @@ get(Table, Key) -> get(Table, Key, transaction).
 %% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
--spec get(table(), key(), dirty | transaction) -> [value()] | {error, term()}.
-get(Table, Key, dirty) ->
-    [Val || {_, _, Val} <- mnesia:dirty_read(Table, Key)];
-get(Table, Key, transaction) ->
-    do(fun() -> r(Table, Key, read) end).
+-spec get(table(), key(), dirty | transaction) ->
+                 [{key(), value()}] | {error, term()}.
+get(Table, Key, dirty)       -> dirt_r_key(Table, Key);
+get(Table, Key, transaction) -> do(fun() -> r_key(Table, Key, read) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -174,7 +204,7 @@ get(Table, Key, transaction) ->
 %% @end
 %%------------------------------------------------------------------------------
 -spec get_all(table()) -> [{key(), value()}] | {error, term()}.
-get_all(Table) -> do(fun() -> r_all(Table, read) end).
+get_all(Table) -> do(fun() -> r_key(Table, '_', read) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -195,11 +225,11 @@ get_all(Table) -> do(fun() -> r_all(Table, read) end).
 %% @end
 %%------------------------------------------------------------------------------
 -spec update(table(), key(), fun(([value()]) -> [value()])) ->
-                    {ok, [value()]} | {error, term()}.
+                    [{key(), value()}] | {error, term()}.
 update(Table, Key, Fun) when is_function(Fun) ->
     do(fun() ->
-               Values = r(Table, Key, write),
-               {ok, d_and_w(Table, Key, Values, Fun(Values))}
+               Values = to_values(Key, r(Table, Key, write)),
+               to_key_values(Key, d_and_w(Table, Key, Values, Fun(Values)))
        end).
 
 %%------------------------------------------------------------------------------
@@ -216,30 +246,12 @@ update(Table, Key, Fun) when is_function(Fun) ->
 %% @end
 %%------------------------------------------------------------------------------
 -spec update_all(table(), fun((key(), value()) -> {ok, value()} | any())) ->
-                        {ok, [{key(), value()}]} | {error, term()}.
+                        [{key(), value()}] | {error, term()}.
 update_all(Table, Fun) when is_function(Fun) ->
     do(fun() ->
-               {ok, [{K, NewV} || {K, V} <- r_all(Table, write),
-                                  NewV <- w_or_d(Table, K, V, Fun(K, V))]}
+               [{K, NewV} || {K, V} <- r_key(Table, '_', write),
+                             NewV <- w_or_d(Table, K, V, Fun(K, V))]
        end).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Subscribe the caller for Mnesia events concerning the given table. The caller
-%% must be prepared to receive messages of the form
-%% `{mnesia_table_event, Event}'.
-%% @end
-%%------------------------------------------------------------------------------
--spec subscribe(table()) -> ok | {error, term()}.
-subscribe(Table) -> manage_subscription(Table, subscribe).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Unsubscribe the caller from Mnesia events concerning the given table.
-%% @end
-%%------------------------------------------------------------------------------
--spec unsubscribe(table()) -> ok | {error, term()}.
-unsubscribe(Table) -> manage_subscription(Table, unsubscribe).
 
 %%%=============================================================================
 %%% Application callbacks
@@ -304,19 +316,6 @@ await_table(Table, Node) ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Subscribe or unsubscribe the caller for `simple' Mnesia table events
-%% regarding a certain table.
-%%------------------------------------------------------------------------------
-manage_subscription(Table, Action) ->
-    case mnesia:Action({table, Table, simple}) of
-        {ok, _Node} ->
-            ok;
-        Error ->
-            Error
-    end.
-
-%%------------------------------------------------------------------------------
-%% @private
 %% Spawns `Fun' in a mnesia transaction.
 %%------------------------------------------------------------------------------
 do(Fun) ->
@@ -329,17 +328,34 @@ do(Fun) ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Read `Key' from `Tab', only allowed within transaction context.
+%% Read every entry matching `Key' from `Tab' in a dirty manner, no transaction
+%% required.
 %%------------------------------------------------------------------------------
-r(Tab, Key, Lock) -> [Val || {_, _, Val} <- mnesia:read(Tab, Key, Lock)].
+dirt_r_key(Tab, Key) ->
+    try mnesia:dirty_select(Tab, r_key_spec(Tab, Key)) of
+        Entries -> [{K, V} || {_, K, V} <- Entries]
+    catch
+        exit:{aborted, Reason} -> {error, Reason}
+    end.
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Read everything from `Tab', only allowed within transaction context.
+%% Read `Key' from `Tab', only allowed within transaction context.
 %%------------------------------------------------------------------------------
-r_all(Tab, Lock) ->
-    Spec = [{{Tab, '_', '_'}, [], ['$_']}],
-    [{Key, Val} || {_, Key, Val} <- mnesia:select(Tab, Spec, Lock)].
+r(Tab, Key, Lock) -> [{K, V} || {_, K, V} <- mnesia:read(Tab, Key, Lock)].
+
+%%------------------------------------------------------------------------------
+%% @private
+%% Read every entry matching `Key' from `Tab', only allowed within transaction
+%% context.
+%%------------------------------------------------------------------------------
+r_key(Tab, Key, Lock) ->
+    [{K, V} || {_, K, V} <- mnesia:select(Tab, r_key_spec(Tab, Key), Lock)].
+
+%%------------------------------------------------------------------------------
+%% @private
+%%------------------------------------------------------------------------------
+r_key_spec(Tab, Key) -> [{{Tab, Key, '_'}, [], ['$_']}].
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -358,12 +374,33 @@ d(Tab, Key, Val) -> mnesia:delete_object({Tab, Key, Val}).
 %%------------------------------------------------------------------------------
 %% @private
 %% Read all mappings for `Key' in `Tab', delete them and return the previous
-%% mappings.
+%% mappings. Only allowed within transaction context.
 %%------------------------------------------------------------------------------
-r_and_d(Tab, Key) ->
-    Values = r(Tab, Key, write),
+r_and_d_all(Tab, Key) ->
+    KeyValues = r(Tab, Key, write),
     ok = mnesia:delete({Tab, Key}),
-    Values.
+    KeyValues.
+
+%%------------------------------------------------------------------------------
+%% @private
+%% Delete the exact mapping from `Key' to `Val' and delete it. Only allowed
+%% within transaction context.
+%%------------------------------------------------------------------------------
+r_and_d_exact(Tab, Key, Val) ->
+    KeyValues = r(Tab, Key, write),
+    ok = d(Tab, Key, Val),
+    [{K, V} || {K, V} <- KeyValues, K =:= Key, V =:= Val].
+
+%%------------------------------------------------------------------------------
+%% @private
+%% Read all mappings for `Key' in `Tab', establish a new mapping from `Key' to
+%% `Val' and return the previous mappings. Only allowed within transaction
+%% context.
+%%------------------------------------------------------------------------------
+r_and_w_all(Tab, Key, Val) ->
+    KeyValues = r(Tab, Key, write),
+    ok = w(Tab, Key, Val),
+    KeyValues.
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -391,3 +428,13 @@ w_or_d(Tab, Key, _Val, {ok, NewVal}) ->
 w_or_d(Tab, Key, Val, _) ->
     d(Tab, Key, Val),
     [].
+
+%%------------------------------------------------------------------------------
+%% @private
+%%------------------------------------------------------------------------------
+to_values(Key, KeyValues) -> [Value || {K, Value} <- KeyValues, K =:= Key].
+
+%%------------------------------------------------------------------------------
+%% @private
+%%------------------------------------------------------------------------------
+to_key_values(Key, Values) -> [{Key, Value} || Value <- Values].
