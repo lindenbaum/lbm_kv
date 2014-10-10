@@ -84,8 +84,8 @@ put3_get_and_del3() ->
 
 put2_get_and_del2() ->
     qc(?FORALL(
-          {Key1, Value1, Key2, Value2},
-          {safe(), safe(), safe(), safe()},
+          {{Key1, Key2}, Value1, Value2},
+          {?SUCHTHAT({Key1, Key2}, {safe(), safe()}, Key1 =/= Key2), safe(), safe()},
           begin
               KeyValue1 = {Key1, Value1},
               KeyValue2 = {Key2, Value2},
