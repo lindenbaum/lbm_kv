@@ -310,11 +310,20 @@ netsplit() ->
 setup() ->
     fun() ->
             ok = distribute(?NODE),
-            {ok, Apps} = application:ensure_all_started(lbm_kv),
+            Apps = setup_apps(),
             ok = lbm_kv:create(?TABLE),
             ok = lbm_kv:replicate_to(?TABLE, node()),
             Apps
     end.
+
+%%------------------------------------------------------------------------------
+%% @private
+%%------------------------------------------------------------------------------
+setup_apps() ->
+    application:load(sasl),
+    ok = application:set_env(sasl, sasl_error_logger, false),
+    {ok, Apps} = application:ensure_all_started(lbm_kv),
+    Apps.
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -352,10 +361,8 @@ slave_setup(Name) ->
 %%------------------------------------------------------------------------------
 slave_setup_env(Node) ->
     Paths = code:get_path(),
-    PathFun = fun() -> [code:add_patha(P)|| P <- Paths] end,
-    ok = slave_execute(Node, PathFun),
-    AppFun = fun() -> {ok, _} = application:ensure_all_started(lbm_kv) end,
-    ok = slave_execute(Node, AppFun).
+    ok = slave_execute(Node, fun() -> [code:add_patha(P)|| P <- Paths] end),
+    ok = slave_execute(Node, fun() -> setup_apps() end).
 
 %%------------------------------------------------------------------------------
 %% @private
