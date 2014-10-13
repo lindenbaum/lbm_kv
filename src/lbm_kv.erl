@@ -54,7 +54,8 @@
          get/3,
          get_all/1,
          update/3,
-         update_all/2]).
+         update_all/2,
+         info/0]).
 
 %% Application callbacks
 -export([start/2, stop/1]).
@@ -252,6 +253,14 @@ update_all(Table, Fun) when is_function(Fun) ->
                [{K, NewV} || {K, V} <- r_key(Table, '_', write),
                              NewV <- w_or_d(Table, K, V, Fun(K, V))]
        end).
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Print information about the `lbm_kv' state to stdout.
+%% @end
+%%------------------------------------------------------------------------------
+-spec info() -> ok.
+info() -> lbm_kv_mon:info().
 
 %%%=============================================================================
 %%% Application callbacks

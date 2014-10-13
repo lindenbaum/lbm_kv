@@ -33,7 +33,8 @@
 
 %% Internal API
 -export([start_link/0,
-         add_table/2]).
+         add_table/2,
+         info/0]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -64,6 +65,17 @@ start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 -spec add_table(node(), atom()) -> ok.
 add_table(Node, Table) -> gen_server:cast({?MODULE, Node}, {add_table, Table}).
 
+%%------------------------------------------------------------------------------
+%% @private
+%% Print the all `lbm_kv` tables with RAM replicas on this node.
+%%------------------------------------------------------------------------------
+-spec info() -> ok.
+info() ->
+    Tables = gen_server:call(?MODULE, info),
+    io:format("~w local lbm_kv tables on ~s~n", [length(Tables), node()]),
+    [io:format(" * ~s~n", [Table]) || Table <- Tables],
+    io:format("~n").
+
 %%%=============================================================================
 %%% gen_server callbacks
 %%%=============================================================================
@@ -90,6 +102,7 @@ init([]) ->
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
+handle_call(info, _From, State)     -> {reply, State#state.tables, State};
 handle_call(_Request, _From, State) -> {reply, undef, State}.
 
 %%------------------------------------------------------------------------------

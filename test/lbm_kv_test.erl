@@ -164,6 +164,9 @@ integration() ->
     ?assertEqual([], lbm_kv:get(?TABLE, key)),
     ?assertEqual([], lbm_kv:get_all(?TABLE)),
 
+    %% info
+    ?assertEqual(ok, lbm_kv:info()),
+
     %% add key => value
     ?assertEqual([], lbm_kv:put(?TABLE, key, value)),
     ?assertEqual([{key, value}], lbm_kv:get(?TABLE, key)),
