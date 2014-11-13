@@ -26,6 +26,16 @@
 %%% way to distribute RAM copies of a table is to replicate the table explicitly
 %%% using {@link replicate_to/2}.
 %%%
+%%% A word about when to call {@link create/1} or {@link replicate_to/2}:
+%%% When using RAM copies, Mnesia is able to `merge' schema tables of different
+%%% nodes, as long as one of the schema's to merge is clean (no tables created
+%%% yet). This has implications on the timing of table distribution. The above
+%%% mentioned functions should only be called after the respective nodes
+%%% connected. If e.g. {@link create/1} is called on two nodes independently
+%%% before these nodes have a `net_kernel' connection, the two tables can't be
+%%% merged and will stay independent, resulting in the condition that one of the
+%%% nodes will not be able to take part in Mnesia distribution!
+%%%
 %%% Every connected node has read and write access to all Mnesia tables. There's
 %%% no need to replicate a table locally. This should only be done for
 %%% redundancy reasons.
