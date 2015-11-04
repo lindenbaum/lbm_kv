@@ -27,7 +27,6 @@
                 number() |
                 boolean() |
                 binary() |
-                [safe()] |
                 tuple(safe()) |
                 tuple(safe(), safe()) |
                 tuple(safe(), safe(), safe()).
@@ -47,10 +46,10 @@ all_test_() ->
      [
       fun bad_type/0,
       fun empty/0,
-      fun put3_get_and_del3/0,
+      fun put3_get_and_del2/0,
       fun put2_get_and_del2/0,
       fun update/0,
-      fun update_all/0,
+      fun update_table/0,
       fun integration/0,
       fun distributed/0,
       fun netsplit/0
@@ -58,7 +57,7 @@ all_test_() ->
 
 bad_type() ->
     ?assertEqual(
-       {aborted,{bad_type,table,{?TABLE,{{a}},'_'}}},
+       {aborted,{bad_type,{?TABLE,{{a}},['_']}}},
        mnesia:transaction(
          fun() ->
                  mnesia:write({?TABLE, {{'a'}}, ['_']}),
@@ -66,19 +65,20 @@ bad_type() ->
          end)).
 
 empty() ->
-    ?assertEqual([], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([], lbm_kv:get_all(?TABLE)).
+    ?assertEqual({ok, []}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, []}, lbm_kv:match(?TABLE, '_')).
 
-put3_get_and_del3() ->
+put3_get_and_del2() ->
     qc(?FORALL(
           {Key, Value},
           {safe(), safe()},
           begin
               KeyValue = {Key, Value},
-              ?assertEqual([], lbm_kv:put(?TABLE, Key, Value)),
-              ?assertEqual([KeyValue], lbm_kv:get(?TABLE, Key)),
-              ?assert(lists:member(KeyValue, lbm_kv:get_all(?TABLE))),
-              ?assertEqual([KeyValue], lbm_kv:del(?TABLE, Key, Value)),
+              ?assertEqual({ok, []}, lbm_kv:put(?TABLE, Key, Value)),
+              ?assertEqual({ok, [KeyValue]}, lbm_kv:get(?TABLE, Key)),
+              {ok, Matched} = lbm_kv:match(?TABLE, '_'),
+              ?assert(lists:member(KeyValue, Matched)),
+              ?assertEqual({ok, [KeyValue]}, lbm_kv:del(?TABLE, Key)),
               true
           end)).
 
@@ -89,14 +89,11 @@ put2_get_and_del2() ->
           begin
               KeyValue1 = {Key1, Value1},
               KeyValue2 = {Key2, Value2},
-              ?assertEqual([], lbm_kv:put(?TABLE, [KeyValue1, KeyValue2])),
-              Get = lbm_kv:get(?TABLE, '_', dirty),
+              ?assertEqual({ok, []}, lbm_kv:put(?TABLE, [KeyValue1, KeyValue2])),
+              {ok, Get} = lbm_kv:match(?TABLE, '_', dirty),
               ?assert(lists:member(KeyValue1, Get)),
               ?assert(lists:member(KeyValue2, Get)),
-              GetAll = lbm_kv:get_all(?TABLE),
-              ?assert(lists:member(KeyValue1, GetAll)),
-              ?assert(lists:member(KeyValue2, GetAll)),
-              Delete = lbm_kv:del(?TABLE, [Key1, Key2]),
+              {ok, Delete} = lbm_kv:del(?TABLE, [Key1, Key2]),
               ?assert(lists:member(KeyValue1, Delete)),
               ?assert(lists:member(KeyValue2, Delete)),
               true
@@ -110,21 +107,21 @@ update() ->
               KeyValue = {Key, Value},
               KeyUpdate = {Key, Update},
 
-              Add = fun([]) -> [Value] end,
-              ?assertEqual([KeyValue], lbm_kv:update(?TABLE, Key, Add)),
-              ?assertEqual([KeyValue], lbm_kv:get(?TABLE, Key)),
+              Add = fun(_, undefined) -> {value, Value} end,
+              ?assertEqual({ok, []}, lbm_kv:update(?TABLE, Key, Add)),
+              ?assertEqual({ok, [KeyValue]}, lbm_kv:get(?TABLE, Key)),
 
-              Modify = fun([V]) when V == Value -> [Update] end,
-              ?assertEqual([KeyUpdate], lbm_kv:update(?TABLE, Key, Modify)),
-              ?assertEqual([KeyUpdate], lbm_kv:get(?TABLE, Key)),
+              Modify = fun(_, {value, V}) when V == Value -> {value, Update} end,
+              ?assertEqual({ok, [KeyValue]}, lbm_kv:update(?TABLE, Key, Modify)),
+              ?assertEqual({ok, [KeyUpdate]}, lbm_kv:get(?TABLE, Key)),
 
-              Delete = fun([V]) when V == Update -> [] end,
-              ?assertEqual([], lbm_kv:update(?TABLE, Key, Delete)),
-              ?assertEqual([], lbm_kv:get(?TABLE, Key)),
+              Delete = fun(_, {value, V}) when V == Update -> delete end,
+              ?assertEqual({ok, [KeyUpdate]}, lbm_kv:update(?TABLE, Key, Delete)),
+              ?assertEqual({ok, []}, lbm_kv:get(?TABLE, Key)),
               true
           end)).
 
-update_all() ->
+update_table() ->
     qc(?FORALL(
           {Key, Value, Update},
           {safe(), safe(), safe()},
@@ -132,91 +129,93 @@ update_all() ->
               KeyValue = {Key, Value},
               KeyUpdate = {Key, Update},
 
-              Identity = fun(_, V) -> {ok, V} end,
-              ?assertEqual([], lbm_kv:update_all(?TABLE, Identity)),
+              Identity = fun(_, {value, V}) -> {value, V} end,
+              ?assertEqual({ok, []}, lbm_kv:update(?TABLE, Identity)),
 
-              Modify = fun(K, V) when K== Key, V == Value ->
-                               {ok, Update};
-                          (_, V) ->
-                               {ok, V}
+              Modify = fun(K, {value, V}) when K == Key, V == Value ->
+                               {value, Update};
+                          (_, {value, V}) ->
+                               {value, V}
                           end,
-              ?assertEqual([], lbm_kv:put(?TABLE, Key, Value)),
-              ?assertEqual([KeyValue], lbm_kv:get(?TABLE, Key)),
-              ?assert(lists:member(KeyUpdate, lbm_kv:update_all(?TABLE, Modify))),
-              ?assertEqual([KeyUpdate], lbm_kv:get(?TABLE, Key)),
+              ?assertEqual({ok, []}, lbm_kv:put(?TABLE, Key, Value)),
+              ?assertEqual({ok, [KeyValue]}, lbm_kv:get(?TABLE, Key)),
+              {ok, Modified} = lbm_kv:update(?TABLE, Modify),
+              ?assert(lists:member(KeyValue, Modified)),
+              ?assertEqual({ok, [KeyUpdate]}, lbm_kv:get(?TABLE, Key)),
 
-              Delete = fun(K, V) when K == Key, V == Update ->
+              Delete = fun(K, {value, V}) when K == Key, V == Update ->
                                delete;
-                          (_, V) ->
-                               {ok, V}
+                          (_, {value, V}) ->
+                               {value, V}
                        end,
-              ?assert(not lists:member(KeyUpdate, lbm_kv:update_all(?TABLE, Delete))),
-              ?assertEqual([], lbm_kv:get(?TABLE, Key)),
+              {ok, Deleted} = lbm_kv:update(?TABLE, Delete),
+              ?assert(lists:member(KeyUpdate, Deleted)),
+              ?assertEqual({ok, []}, lbm_kv:get(?TABLE, Key)),
 
               DeleteAll = fun(_, _) -> delete end,
-              ?assertEqual([], lbm_kv:update_all(?TABLE, DeleteAll)),
-              ?assertEqual([], lbm_kv:get_all(?TABLE)),
+              ?assertEqual({ok, []}, lbm_kv:update(?TABLE, DeleteAll)),
+              ?assertEqual({ok, []}, lbm_kv:match(?TABLE, '_')),
               true
           end)).
 
 integration() ->
     %% initial empty
-    ?assertEqual([], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([], lbm_kv:get_all(?TABLE)),
+    ?assertEqual({ok, []}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, []}, lbm_kv:match(?TABLE, '_')),
 
     %% info
     ?assertEqual(ok, lbm_kv:info()),
 
     %% add key => value
-    ?assertEqual([], lbm_kv:put(?TABLE, key, value)),
-    ?assertEqual([{key, value}], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([{key, value}], lbm_kv:get_all(?TABLE)),
+    ?assertEqual({ok, []}, lbm_kv:put(?TABLE, key, value)),
+    ?assertEqual({ok, [{key, value}]}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, [{key, value}]}, lbm_kv:match(?TABLE, '_')),
 
     %% update to key => value1
-    Update1 = fun([value]) -> [value1] end,
-    ?assertEqual([{key, value1}], lbm_kv:update(?TABLE, key, Update1)),
-    ?assertEqual([{key, value1}], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([{key, value1}], lbm_kv:get_all(?TABLE)),
+    Update1 = fun(key, {value, value}) -> {value, value1} end,
+    ?assertEqual({ok, [{key, value}]}, lbm_kv:update(?TABLE, key, Update1)),
+    ?assertEqual({ok, [{key, value1}]}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, [{key, value1}]}, lbm_kv:match(?TABLE, '_')),
 
     %% update to key => value2
-    UpdateAll1 = fun(key, value1) -> {ok, value2} end,
-    ?assertEqual([{key, value2}], lbm_kv:update_all(?TABLE, UpdateAll1)),
-    ?assertEqual([{key, value2}], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([{key, value2}], lbm_kv:get_all(?TABLE)),
+    UpdateAll1 = fun(key, {value, value1}) -> {value, value2} end,
+    ?assertEqual({ok, [{key, value1}]}, lbm_kv:update(?TABLE, UpdateAll1)),
+    ?assertEqual({ok, [{key, value2}]}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, [{key, value2}]}, lbm_kv:match(?TABLE, '_')),
 
     %% empty table with update
-    Update2 = fun([value2]) -> [] end,
-    ?assertEqual([], lbm_kv:update(?TABLE, key, Update2)),
-    ?assertEqual([], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([], lbm_kv:get_all(?TABLE)),
+    Update2 = fun(key, {value, value2}) -> delete end,
+    ?assertEqual({ok, [{key, value2}]}, lbm_kv:update(?TABLE, key, Update2)),
+    ?assertEqual({ok, []}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, []}, lbm_kv:match(?TABLE, '_')),
 
     %% add key => value2
-    ?assertEqual([], lbm_kv:put(?TABLE, key, value2)),
-    ?assertEqual([{key, value2}], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([{key, value2}], lbm_kv:get_all(?TABLE)),
+    ?assertEqual({ok, []}, lbm_kv:put(?TABLE, key, value2)),
+    ?assertEqual({ok, [{key, value2}]}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, [{key, value2}]}, lbm_kv:match(?TABLE, '_')),
 
     %% empty table with update_all
-    UpdateAll2 = fun(key, value2) -> delete end,
-    ?assertEqual([], lbm_kv:update_all(?TABLE, UpdateAll2)),
-    ?assertEqual([], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([], lbm_kv:get_all(?TABLE)),
+    UpdateAll2 = fun(key, {value, value2}) -> delete end,
+    ?assertEqual({ok, [{key, value2}]}, lbm_kv:update(?TABLE, UpdateAll2)),
+    ?assertEqual({ok, []}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, []}, lbm_kv:match(?TABLE, '_')),
 
     %% no update for non-existing key
-    Update3 = fun([]) -> [] end,
-    ?assertEqual([], lbm_kv:update(?TABLE, key, Update3)),
-    ?assertEqual([], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([], lbm_kv:get_all(?TABLE)),
+    Update3 = fun(key, undefined) -> undefined end,
+    ?assertEqual({ok, []}, lbm_kv:update(?TABLE, key, Update3)),
+    ?assertEqual({ok, []}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, []}, lbm_kv:match(?TABLE, '_')),
 
     %% add key => value with update to non-existing key
-    Update4 = fun([]) -> [value] end,
-    ?assertEqual([{key, value}], lbm_kv:update(?TABLE, key, Update4)),
-    ?assertEqual([{key, value}], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([{key, value}], lbm_kv:get_all(?TABLE)),
+    Update4 = fun(key, undefined) -> {value, value} end,
+    ?assertEqual({ok, []}, lbm_kv:update(?TABLE, key, Update4)),
+    ?assertEqual({ok, [{key, value}]}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, [{key, value}]}, lbm_kv:match(?TABLE, '_')),
 
     %% del key => value
-    ?assertEqual([{key, value}], lbm_kv:del(?TABLE, key, value)),
-    ?assertEqual([], lbm_kv:get(?TABLE, key)),
-    ?assertEqual([], lbm_kv:get_all(?TABLE)).
+    ?assertEqual({ok, [{key, value}]}, lbm_kv:del(?TABLE, key)),
+    ?assertEqual({ok, []}, lbm_kv:get(?TABLE, key)),
+    ?assertEqual({ok, []}, lbm_kv:match(?TABLE, '_')).
 
 distributed() ->
     process_flag(trap_exit, true),
@@ -230,29 +229,29 @@ distributed() ->
     {ok, Slave3} = slave_setup(slave3),
 
     %% Put a value from the local node
-    PutValue = fun() -> [] = lbm_kv:put(?TABLE, key, value) end,
+    PutValue = fun() -> {ok, []} = lbm_kv:put(?TABLE, key, value) end,
     PutValue(),
 
     %% Read the written value from all nodes
-    GetValue = fun() -> [{key, value}] = lbm_kv:get(?TABLE, key) end,
+    GetValue = fun() -> {ok, [{key, value}]} = lbm_kv:get(?TABLE, key) end,
     GetValue(),
     ?assertEqual(ok, slave_execute(Slave1, GetValue)),
     ?assertEqual(ok, slave_execute(Slave2, GetValue)),
     ?assertEqual(ok, slave_execute(Slave3, GetValue)),
 
     %% Read the whole table from all nodes
-    GetAll = fun() -> [{key, value}] = lbm_kv:get_all(?TABLE) end,
+    GetAll = fun() -> {ok, [{key, value}]} = lbm_kv:match(?TABLE, '_') end,
     GetAll(),
     ?assertEqual(ok, slave_execute(Slave1, GetAll)),
     ?assertEqual(ok, slave_execute(Slave2, GetAll)),
     ?assertEqual(ok, slave_execute(Slave3, GetAll)),
 
     %% Delete the value from a slave node
-    Update = fun() -> [{key, value}] = lbm_kv:del(?TABLE, key, value) end,
+    Update = fun() -> {ok, [{key, value}]} = lbm_kv:del(?TABLE, key) end,
     ?assertEqual(ok, slave_execute(Slave1, Update)),
 
     %% Read the update from all nodes
-    GetEmpty = fun() -> [] = lbm_kv:get(?TABLE, key) end,
+    GetEmpty = fun() -> {ok, []} = lbm_kv:get(?TABLE, key) end,
     GetEmpty(),
     ?assertEqual(ok, slave_execute(Slave1, GetEmpty)),
     ?assertEqual(ok, slave_execute(Slave2, GetEmpty)),
