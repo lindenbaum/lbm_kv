@@ -50,9 +50,7 @@ all_test_() ->
       fun put2_get_and_del2/0,
       fun update/0,
       fun update_table/0,
-      fun integration/0,
-      fun distributed/0,
-      fun netsplit/0
+      fun integration/0
      ]}.
 
 bad_type() ->
@@ -217,91 +215,6 @@ integration() ->
     ?assertEqual({ok, []}, lbm_kv:get(?TABLE, key)),
     ?assertEqual({ok, []}, lbm_kv:match(?TABLE, '_')).
 
-distributed() ->
-    process_flag(trap_exit, true),
-
-    %% start slave node with local replica of table
-    {ok, Slave1} = slave_setup(slave1),
-    ok = lbm_kv:replicate_to(?TABLE, Slave1),
-
-    %% start two slave nodes without replicas
-    {ok, Slave2} = slave_setup(slave2),
-    {ok, Slave3} = slave_setup(slave3),
-
-    %% Put a value from the local node
-    PutValue = fun() -> {ok, []} = lbm_kv:put(?TABLE, key, value) end,
-    PutValue(),
-
-    %% Read the written value from all nodes
-    GetValue = fun() -> {ok, [{key, value}]} = lbm_kv:get(?TABLE, key) end,
-    GetValue(),
-    ?assertEqual(ok, slave_execute(Slave1, GetValue)),
-    ?assertEqual(ok, slave_execute(Slave2, GetValue)),
-    ?assertEqual(ok, slave_execute(Slave3, GetValue)),
-
-    %% Read the whole table from all nodes
-    GetAll = fun() -> {ok, [{key, value}]} = lbm_kv:match(?TABLE, '_') end,
-    GetAll(),
-    ?assertEqual(ok, slave_execute(Slave1, GetAll)),
-    ?assertEqual(ok, slave_execute(Slave2, GetAll)),
-    ?assertEqual(ok, slave_execute(Slave3, GetAll)),
-
-    %% Delete the value from a slave node
-    Update = fun() -> {ok, [{key, value}]} = lbm_kv:del(?TABLE, key) end,
-    ?assertEqual(ok, slave_execute(Slave1, Update)),
-
-    %% Read the update from all nodes
-    GetEmpty = fun() -> {ok, []} = lbm_kv:get(?TABLE, key) end,
-    GetEmpty(),
-    ?assertEqual(ok, slave_execute(Slave1, GetEmpty)),
-    ?assertEqual(ok, slave_execute(Slave2, GetEmpty)),
-    ?assertEqual(ok, slave_execute(Slave3, GetEmpty)),
-
-    %% Shutdown a slave node
-    ?assertEqual(ok, slave:stop(Slave2)),
-
-    %% Put a value from a slave node
-    ?assertEqual(ok, slave_execute(Slave3, PutValue)),
-
-    %% Start previously exited node
-    {ok, Slave2} = slave_setup(slave2),
-
-    %% Read the written value from all nodes
-    GetValue(),
-    ?assertEqual(ok, slave_execute(Slave1, GetValue)),
-    ?assertEqual(ok, slave_execute(Slave2, GetValue)),
-    ?assertEqual(ok, slave_execute(Slave3, GetValue)),
-
-    ok.
-
-netsplit() ->
-    process_flag(trap_exit, true),
-
-    %% start slave nodes with local replica of table
-    {ok, Slave1} = slave_setup(slave1),
-    {ok, Slave2} = slave_setup(slave2),
-    ok = lbm_kv:replicate_to(?TABLE, Slave1),
-    ok = lbm_kv:replicate_to(?TABLE, Slave2),
-
-    %% start slave node without local replica of table
-    {ok, Slave3} = slave_setup(slave3),
-
-    ok = net_kernel:monitor_nodes(true),
-
-    %% simualte netsplit between Slave1 and Slave2, Slave3
-    Netsplit = fun() ->
-                       true = net_kernel:disconnect(Slave2),
-                       true = net_kernel:disconnect(Slave3),
-                       true = net_kernel:connect(Slave2),
-                       true = net_kernel:connect(Slave3)
-               end,
-    ok = slave_execute(Slave1, Netsplit),
-
-    %% Expect that Slave2 gets restarted by the default conflict resolver.
-    %% Unfortunately, slave nodes cannot be restarted using init:restart/1,
-    %% so we cannot test actual recovery.
-    receive {nodedown, Slave2} -> ok end.
-
 %%%=============================================================================
 %%% Internal functions
 %%%=============================================================================
@@ -311,10 +224,8 @@ netsplit() ->
 %%------------------------------------------------------------------------------
 setup() ->
     fun() ->
-            ok = distribute(?NODE),
             Apps = setup_apps(),
             ok = lbm_kv:create(?TABLE),
-            ok = lbm_kv:replicate_to(?TABLE, node()),
             Apps
     end.
 
@@ -334,53 +245,6 @@ teardown() ->
     fun(Apps) ->
             [application:stop(App) || App <- Apps]
     end.
-
-%%------------------------------------------------------------------------------
-%% @private
-%% Make this node a distributed node.
-%%------------------------------------------------------------------------------
-distribute(Name) ->
-    os:cmd("epmd -daemon"),
-    case net_kernel:start([Name]) of
-        {ok, _}                       -> ok;
-        {error, {already_started, _}} -> ok;
-        Error                         -> Error
-    end.
-
-%%------------------------------------------------------------------------------
-%% @private
-%% Start a slave node and setup its environment (code path, applications, ...).
-%%------------------------------------------------------------------------------
-slave_setup(Name) ->
-    {ok, Node} = slave:start_link(hostname(), Name),
-    true = lists:member(Node, nodes()),
-    slave_setup_env(Node),
-    {ok, Node}.
-
-%%------------------------------------------------------------------------------
-%% @private
-%% Setup the slave node environment (code path, applications, ...).
-%%------------------------------------------------------------------------------
-slave_setup_env(Node) ->
-    Paths = code:get_path(),
-    ok = slave_execute(Node, fun() -> [code:add_patha(P)|| P <- Paths] end),
-    ok = slave_execute(Node, fun() -> setup_apps() end).
-
-%%------------------------------------------------------------------------------
-%% @private
-%% Execute `Fun' on the given node.
-%%------------------------------------------------------------------------------
-slave_execute(Node, Fun) ->
-    Pid = spawn_link(Node, Fun),
-    receive
-        {'EXIT', Pid, normal} -> ok;
-        {'DOWN', Pid, Reason} -> {error, Reason}
-    end.
-
-%%------------------------------------------------------------------------------
-%% @private
-%%------------------------------------------------------------------------------
-hostname() -> list_to_atom(element(2, inet:gethostname())).
 
 %%------------------------------------------------------------------------------
 %% @private
