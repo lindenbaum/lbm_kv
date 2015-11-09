@@ -21,8 +21,35 @@
 -ifndef(lbm_kv_hrl_).
 -define(lbm_kv_hrl_, 1).
 
--define(LBM_KV_ATTRIBUTES, {attributes, [key, val, version]}).
+%% All lbm_kv have a version field in addition to the default attributes.
+-define(LBM_KV_ATTRS, [key, val, version]).
+
+%% A special define using a `hidden' mnesia feature to set the `cookie' of a
+%% table (at creation time only). This is needed to be able to merge schemas
+%% of nodes. That created the same table independently (while not yet
+%% connected). Please note that this bypasses a mnesia-builtin security
+%% mechanism that classifies tables with the same name and different cookie as
+%% incompatible by default. If two nodes have at least one table with the same
+%% name and differing cookie a schema merge and thus a mnesia-connection between
+%% these nodes will be refused by mnesia.
+-define(LBM_KV_COOKIE, {{0,0,0}, lbm_kv}).
+
+%% The options used in `mnesia:create_table/2'.
+-define(LBM_KV_TABLE_OPTS(), [{attributes, ?LBM_KV_ATTRS},
+                              {cookie, ?LBM_KV_COOKIE},
+                              {ram_copies, [node() | nodes()]}]).
+
+%% A matcher for preprocessed lbm_kv table entries.
 -define(LBM_KV_SHORT(Key, Value, Version), {Key, Value, Version}).
+
+%% A matcher for a raw lbm_kv table entry.
 -define(LBM_KV_LONG(Table, Key, Value, Version), {Table, Key, Value, Version}).
+
+%% Simple debug macro.
+-ifdef(DEBUG).
+-define(LBM_KV_DBG(Fmt, Args), io:format(Fmt, Args)).
+-else.
+-define(LBM_KV_DBG(Fmt, Args), begin _ = Fmt, _ = Args, ok end).
+-endif.
 
 -endif. %% lbm_kv_hrl_

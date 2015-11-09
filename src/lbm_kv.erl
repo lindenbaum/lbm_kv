@@ -19,32 +19,34 @@
 %%%
 %%% @doc
 %%% Provides simple, Mnesia-based, distributed key value tables. When started,
-%%% this application distributes Mnesia over all dynamically connected nodes.
+%%% this application distributes Mnesia (and all `lbm_kv' tables) over all
+%%% dynamically connected nodes. The Mnesia cluster can grow and shrink
+%%% dynamically.
 %%%
 %%% All tables created, have key/value semantic (after all its still Mnesia).
-%%% A new key-value-table can be created locally using {@link create/1}. Another
-%%% way to distribute RAM copies of a table is to replicate the table explicitly
-%%% using {@link replicate_to/2}.
+%%% A new key-value-table can be created using {@link create/1}. The table will
+%%% automatically be replicated to other nodes as new node connections are
+%%% detected. Every connected node has read and write access to all Mnesia
+%%% tables. If desired, it is possible to use the default Mnesia API to
+%%% manipulate `lbm_kv' tables. However, `lbm_kv' uses vector clocks that need
+%%% to be updated on every write to be able to use automatic netsplit recovery!
 %%%
-%%% A word about when to call {@link create/1} or {@link replicate_to/2}:
-%%% When using RAM copies, Mnesia is able to `merge' schema tables of different
-%%% nodes, as long as one of the schema's to merge is clean (no tables created
-%%% yet). This has implications on the timing of table distribution. The above
-%%% mentioned functions should only be called after the respective nodes
-%%% connected. If e.g. {@link create/1} is called on two nodes independently
-%%% before these nodes have a `net_kernel' connection, the two tables can't be
-%%% merged and will stay independent, resulting in the condition that one of the
-%%% nodes will not be able to take part in Mnesia distribution!
-%%%
-%%% Every connected node has read and write access to all Mnesia tables. There's
-%%% no need to replicate a table locally. This should only be done for
-%%% redundancy reasons.
+%%% Every `lbm_kv' table uses vector clocks to keep track of the its entries.
+%%% In case of new node connections or netsplits, `lbm_kv' will use these to
+%%% merge the island itself without interaction. However, if there are diverged
+%%% entries `lbm_kv' will look for a user defined callback to resolve the
+%%% conflict. If no such callback can be found one of the conflicting nodes will
+%%% be restarted!
+%%% TODO more info
 %%%
 %%% To be able to use `lbm_kv' none of the connected nodes is allowed to have
 %%% `disk_copies' of its `schema' table, because Mnesia will fail to merge
 %%% schemas on disk nodes (which means that it is likely they can't
-%%% participate). If you need `disk_copies' (it can be brought to work) you're
-%%% on your own here.
+%%% participate). If you need `disk_copies', you're on your own here. Do not
+%%% mess with table replication and mnesia configuration changes yourself!
+%%% There's a lot of black magic happening inside Mnesia and `lbm_kv' will do
+%%% the necessary tricks and workarounds for you. At best you should avoid
+%%% having tables created from outside `lbm_kv'.
 %%% @end
 %%%=============================================================================
 
@@ -55,7 +57,6 @@
 
 %% API
 -export([create/1,
-         replicate_to/2,
          put/3,
          put/2,
          del/2,
@@ -104,6 +105,7 @@
 %%% Behaviour
 %%%=============================================================================
 
+%% TODO
 -callback resolve_conflict(node()) -> any().
 %% Can be implemented by modules handling inconsistent DB state (as detected
 %% after netplits). When a netsplit is detected for a certain table `tab',
@@ -117,34 +119,20 @@
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Similar to {@link replicate_to/2} on the local node.
-%% @end
-%%------------------------------------------------------------------------------
--spec create(table()) -> ok | {error, term()}.
-create(Table) -> replicate_to(Table, node()).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% Replicate a RAM copy of a certain table to the given node. If the table
-%% does not yet exist, it will be created. This can be called multiple times
-%% (even) with the same node.
+%% Create a new key value table which will be replicated as RAM copy across all
+%% nodes in the cluster. The table will only be created, if not yet existing.
+%% This can be called multiple times (even) on the same node.
 %%
 %% The table will be ready for reads and writes when this function returns.
 %% @end
 %%------------------------------------------------------------------------------
--spec replicate_to(table(), node()) -> ok | {error, term()}.
-replicate_to(Table, Node) ->
-    Options = [{ram_copies, [Node]}, ?LBM_KV_ATTRIBUTES],
-    case mnesia:create_table(Table, Options) of
+-spec create(table()) -> ok | {error, term()}.
+create(Table) ->
+    case mnesia:create_table(Table, ?LBM_KV_TABLE_OPTS()) of
         {atomic, ok} ->
-            await_table(Table, Node);
+            await_table(Table);
         {aborted, {already_exists, Table}} ->
-            case add_table_copy(Table, Node) of
-                ok ->
-                    await_table(Table, Node);
-                Error ->
-                    Error
-            end;
+            await_table(Table);
         {aborted, Reason} ->
             {error, Reason}
     end.
@@ -305,7 +293,7 @@ stop(_State) -> ok.
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-init([]) -> {ok, {{one_for_one, 0, 1}, [spec(lbm_kv_mon, [])]}}.
+init([]) -> {ok, {{one_for_one, 5, 1}, [spec(lbm_kv_mon, [])]}}.
 
 %%%=============================================================================
 %%% internal functions
@@ -318,27 +306,13 @@ spec(M, As) -> {M, {M, start_link, As}, permanent, 1000, worker, [M]}.
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Add a RAM copy of a certain table on a certain node.
-%%------------------------------------------------------------------------------
-add_table_copy(Table, Node) ->
-    case mnesia:add_table_copy(Table, Node, ram_copies) of
-        {atomic, ok} ->
-            ok;
-        {aborted, {already_exists, Table, Node}} ->
-            ok;
-        {aborted, Reason} ->
-            {error, Reason}
-    end.
-
-%%------------------------------------------------------------------------------
-%% @private
 %% Blocks the calling process until a certain table is available to this node.
 %%------------------------------------------------------------------------------
-await_table(Table, Node) ->
+await_table(Table) ->
     Timeout = application:get_env(?MODULE, wait_timeout, 10000),
     case mnesia:wait_for_tables([Table], Timeout) of
         ok ->
-            lbm_kv_mon:add_table(Node, Table);
+            ok;
         {timeout, [Table]} ->
             {error, timeout};
         Error ->
