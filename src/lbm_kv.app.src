@@ -20,7 +20,7 @@
 {application, lbm_kv,
  [{description, "."},
   {id, "A simple, distributed, Mnesia-based key-value-store."},
-  {vsn, "0.0.1"},
+  {vsn, "0.0.2"},
   {registered,
    [
     lbm_kv_mon
