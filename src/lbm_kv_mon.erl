@@ -45,9 +45,9 @@
 
 -include("lbm_kv.hrl").
 
--define(DUMP,           "mnesia_core.dump").
+-define(DUMP, "mnesia_core.dump").
 -define(ERR(Fmt, Args), error_logger:error_msg(Fmt, Args)).
--define(RPC_TIMEOUT,    2000).
+-define(INFO(Fmt, Args), error_logger:info_msg(Fmt, Args)).
 
 %%%=============================================================================
 %%% Internal API
@@ -127,9 +127,24 @@ terminate(_Reason, _State) -> ok.
 
 %%------------------------------------------------------------------------------
 %% @private
+%% Handle Mnesia system events. Fatal conditions will be resolved with node
+%% restart.
+%%------------------------------------------------------------------------------
+handle_mnesia_event({mnesia_fatal, Format, Args, BinaryCore}, _State) ->
+    ?ERR("Fatal condition: " ++ Format, Args),
+    file:write_file(?DUMP, BinaryCore),
+    final_resolve_conflict();
+handle_mnesia_event({mnesia_info, Format, Args}, _State) ->
+    ?INFO(Format, Args);
+handle_mnesia_event(_Event, _State) ->
+    ok.
+
+%%------------------------------------------------------------------------------
+%% @private
 %% Expand the mnesia cluster to `Node'. This will add table copies of local
 %% tables to `Node' as well as table copies remote tables on the local node.
-%% This is the function handling dynamic expansion of mnesia on new nodes.
+%% This is the central function handling dynamic expansion of mnesia on new
+%% nodes as well as recovery from partitioned networks.
 %%
 %% A word about table replication:
 %% When using RAM copies, Mnesia is able to `merge' schema tables of different
@@ -142,79 +157,129 @@ terminate(_Reason, _State) -> ok.
 %% configured as RAM copy on the remote node __before__ merging the schemas.
 %%------------------------------------------------------------------------------
 expand(Node) ->
-    case is_running(Node) of
-        true ->
-            ?LBM_KV_DBG("~s is about to expand to ~s~n", [node(), Node]),
-            LocalTables = relevant_tables(node()),
-            RemoteTables = relevant_tables(Node),
-            ?LBM_KV_DBG("Relevant tables on ~s: ~w~n", [node(), LocalTables]),
-            ?LBM_KV_DBG("Relevant tables on ~s: ~w~n", [Node, RemoteTables]),
-            LocalOnlyTables = LocalTables -- RemoteTables,
-            RemoteOnlyTables = RemoteTables -- LocalTables,
-            ?LBM_KV_DBG("Local-only tables on ~s: ~w~n", [node(), LocalOnlyTables]),
-            ?LBM_KV_DBG("Local-only tables on ~s: ~w~n", [Node, RemoteOnlyTables]),
+    expand(is_running(Node), Node).
+expand(true, Node) ->
+    LocalTables = relevant_tables(node()),
+    RemoteTables = relevant_tables(Node),
+    ?LBM_KV_DBG("Relevant tables on ~s: ~w~n", [node(), LocalTables]),
+    ?LBM_KV_DBG("Relevant tables on ~s: ~w~n", [Node, RemoteTables]),
 
-            LocalSchema = get_cookie(node(), schema),
-            RemoteSchema = get_cookie(Node, schema),
-            ?LBM_KV_DBG("Schema on ~s: ~w~n", [node(), LocalSchema]),
-            ?LBM_KV_DBG("Schema on ~s: ~w~n", [Node, RemoteSchema]),
-            case LocalSchema =:= RemoteSchema of
-                true ->
-                    %% Schemas are already merged, someone else did the work.
-                    ?LBM_KV_DBG("Schemas already merged~n", []),
+    LocalOnlyTables = LocalTables -- RemoteTables,
+    RemoteOnlyTables = RemoteTables -- LocalTables,
+    ?LBM_KV_DBG("Local-only tables on ~s: ~w~n", [node(), LocalOnlyTables]),
+    ?LBM_KV_DBG("Local-only tables on ~s: ~w~n", [Node, RemoteOnlyTables]),
 
-                    %% This also means that the respective remote node must be
-                    %% part of the node's `running_db_nodes'.
-                    true = lists:member(Node, get_running_nodes(node())),
-                    true = lists:member(node(), get_running_nodes(Node)),
+    LocalSchema = get_cookie(node(), schema),
+    RemoteSchema = get_cookie(Node, schema),
+    IsRemoteRunning = lists:member(Node, get_running_nodes(node())),
+    case {LocalSchema =:= RemoteSchema, IsRemoteRunning} of
+        {true, true} ->
+            %% Schemas are already merged and we see the node as running,
+            %% someone else did the work. However, this also means that the
+            %% respective remote node must have this node in its
+            %% `running_db_nodes'.
+            true = lists:member(node(), get_running_nodes(Node)),
 
-                    %% Now distribute tables only found on one of the nodes.
-                    ok = add_table_copies(node(), Node, LocalOnlyTables),
-                    ok = add_table_copies(Node, node(), RemoteOnlyTables),
-                    ok;
-                false ->
+            %% Now distribute tables only found on one of the nodes.
+            add_table_copies(node(), Node, LocalOnlyTables),
+            add_table_copies(Node, node(), RemoteOnlyTables),
+
+            ?INFO("Already connected to ~s~n", [Node]);
+        {IsMerged, IsRemoteRunning} ->
+            case {IsMerged, IsRemoteRunning} of
+                {false, false} ->
                     %% The newly connected node has a different schema. That
                     %% means the schemas must be merged now.
-                    ?LBM_KV_DBG("Schemas need merge~n", []),
+                    ?INFO("Expanding to ~s...~n", [Node]);
+                {true, false} ->
+                    %% Both nodes have the same schema, but none of the nodes
+                    %% has its respective counterpart in its `running_db_nodes',
+                    %% this must be a reconnect after a netsplit.
+                    ?INFO("Recovering from network partition (~s)...~n", [Node])
+            end,
+            connect_nodes(Node, LocalTables, LocalOnlyTables, RemoteOnlyTables)
+    end;
+expand(false, _) ->
+    ok. %% Do not expand to the remote node if mnesia is not running.
 
-                    %% All duplicate tables must be interconnected (with
-                    %% mutual RAM copies) __before__ connecting the nodes.
-                    LocalAndRemoteTables = LocalTables -- LocalOnlyTables,
-                    ?LBM_KV_DBG("Tables to merge: ~w~n", [LocalAndRemoteTables]),
-                    ok = add_table_copies(node(), Node, LocalAndRemoteTables),
-                    ok = add_table_copies(Node, node(), LocalAndRemoteTables),
+%%------------------------------------------------------------------------------
+%% @private
+%%------------------------------------------------------------------------------
+connect_nodes(Node, LocalTables, LocalOnlyTables, RemoteOnlyTables) ->
+    %% All duplicate tables must be interconnected (with mutual RAM copies)
+    %% __before__ connecting the mnesia instances.
+    LocalAndRemoteTables = LocalTables -- LocalOnlyTables,
+    add_table_copies(node(), Node, LocalAndRemoteTables),
+    add_table_copies(Node, node(), LocalAndRemoteTables),
 
-                    %% Connect both nodes and merge values of duplicate tables.
-                    Fun = connect_nodes(LocalAndRemoteTables, Node),
-                    {ok, [Node]} = mnesia_controller:connect_nodes([Node], Fun),
+    %% Connect both nodes and merge values of duplicate tables.
+    Fun = connect_nodes_user_fun(LocalAndRemoteTables, Node),
+    case mnesia_controller:connect_nodes([Node], Fun) of
+        {ok, NewNodes} ->
+            %% The merge is only successful if Node is now part of the
+            %% mnesia cluster
+            true = lists:member(Node, NewNodes),
 
-                    %% Now distribute tables only found on one of the nodes.
-                    ok = add_table_copies(node(), Node, LocalOnlyTables),
-                    ok = add_table_copies(Node, node(), RemoteOnlyTables),
-                    ok
-            end;
-        false ->
-            ok %% Do not expand to the remote node if mnesia is not running.
+            %% Now distribute tables only found on one of the nodes.
+            add_table_copies(node(), Node, LocalOnlyTables),
+            add_table_copies(Node, node(), RemoteOnlyTables),
+
+            ?INFO("Successfully connected to ~s~n", [Node]);
+        Error ->
+            ?ERR("Failed to connect to ~s: ~p~n", [Node, Error]),
+
+            %% last resort
+            final_resolve_conflict()
     end.
 
 %%------------------------------------------------------------------------------
 %% @private
-%% A custom user function that merges the schema of two nodes as well as the
-%% respective values in conflicting tables.
+%% A custom user function that merges the schemas of two node islands as well as
+%% the respective values in conflicting tables.
 %%------------------------------------------------------------------------------
-connect_nodes(TablesToMerge, Node) ->
+connect_nodes_user_fun(TablesToMerge, Node) ->
     fun(SchemaMergeFun) ->
-            ?LBM_KV_DBG("Merging schemas on node ~s...~n", [node()]),
             case SchemaMergeFun(TablesToMerge) of
                 Result = {merged, OldFriends, NewFriends} ->
-                    ?LBM_KV_DBG("OldFriends: ~w, NewFriends: ~w~n", [OldFriends, NewFriends]),
-                    case lbm_kv_merge:tables(TablesToMerge, Node) of
-                        ok ->
-                            Result;
-                        {error, Reason} ->
-                            ?ERR("Failed to merge tables: ~p~n", [Reason]),
-                            ok = final_resolve_conflict(Node),
-                            Result
+                    ?LBM_KV_DBG("Schemas successfully merged~n", []),
+                    ?LBM_KV_DBG("NewFriends: ~w~n", [NewFriends]),
+
+                    %% Sorry, but we must be part of `db_nodes' ourselves or I
+                    %% loose my mind (see mnesia_schema:do_merge_schema/1).
+                    true = lists:member(node(), OldFriends),
+
+                    %% What does this mean?
+                    %% Unfortunately, this is also not really clear to me. My
+                    %% assumption:
+                    %% `NewFriends' seems to be the list of nodes the local node
+                    %% successfully merged its schema with (without the local
+                    %% node itself). The local node is usually part of the
+                    %% `OldFriends' list. In case of asymmetric netsplits there
+                    %% may be a non-empty intersection between the two lists.
+                    %% The merge function may be called multiple times in case
+                    %% additional nodes become visible by merged schemas or
+                    %% through merge retries.
+                    %%
+                    %% What do we do here?
+                    %% We try to make sure to always merge with a sane candidate
+                    %% from another (new) island mnesia connects us to.
+                    case lists:member(Node, OldFriends) of
+                        false ->
+                            %% If we did not already merge with `Node', it
+                            %% __must__ be a member of `NewFriends'.
+                            true = lists:member(Node, NewFriends),
+                            MergeWith = [Node];
+                        true ->
+                            %% Otherwise `Node' is already part of `db_nodes'
+                            %% and thus a member of `OldFriends'. In this case
+                            %% we simple choose a representative of
+                            %% `NewFriends' that is not already an old friend.
+                            MergeWith = NewFriends -- OldFriends
+                    end,
+
+                    case lbm_kv_merge:tables(TablesToMerge, MergeWith) of
+                        ok              -> Result;
+                        {error, Reason} -> mnesia:abort(Reason)
                     end;
                 Result ->
                     Result
@@ -264,8 +329,8 @@ add_table_copy(FromNode, ToNode, Table) ->
             ok;
         {aborted, Reason} ->
             {error, Reason};
-        {badrpc, Reason} ->
-            {error, Reason}
+        Error ->
+            Error
     end.
 
 %%------------------------------------------------------------------------------
@@ -306,103 +371,16 @@ get_db_nodes(Node) -> rpc_mnesia(Node, system_info, [db_nodes]).
 %% when a call is local and optimizes that.
 %%------------------------------------------------------------------------------
 rpc_mnesia(Node, Function, Args) ->
-    rpc:call(Node, mnesia, Function, Args, ?RPC_TIMEOUT).
+    case rpc:call(Node, mnesia, Function, Args, ?LBM_KV_RPC_TIMEOUT) of
+        {badrpc, Reason} -> {error, Reason};
+        Result           -> Result
+    end.
 
 %%------------------------------------------------------------------------------
 %% @private
 %% Final conflict resolver for inconsistent database states, e.g. after
-%% netsplits. This will compare the local node with the offending node with
-%% {@link erlang:'>'/2} and restart the greater node.
+%% netsplits. This will simply restart the local node.
 %%------------------------------------------------------------------------------
-final_resolve_conflict(Node) ->
-    case node() > Node of
-        true ->
-            ?ERR("Final conflict resolution, restarting ~s~n", [node()]),
-            init:restart();
-        _ ->
-            ok
-    end.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-%%------------------------------------------------------------------------------
-%% @private
-%% Handle Mnesia system events. Fatal conditions will be resolved with node
-%% restart. Inconsistent database states will be delegated to table specific
-%% handlers (if any).
-%%------------------------------------------------------------------------------
-handle_mnesia_event({mnesia_fatal, _Format, _Args, BinaryCore}, _State) ->
-    ?ERR("FATAL CONDITION (restarting ~p to recover)", [node()]),
-    file:write_file(?DUMP, BinaryCore),
-    init:restart();
-handle_mnesia_event({mnesia_info, Format, Args}, _State) ->
-    error_logger:info_msg(Format, Args);
-handle_mnesia_event({inconsistent_database, _Context, _Node}, _State) ->
-    %% TODO merge all values
-    ok;
-%%    [resolve_conflict(Node, Table) || Table <- conflicting_tables(State)];
-handle_mnesia_event(_Event, _State) ->
-    ok.
-
-%% %%------------------------------------------------------------------------------
-%% %% @private
-%% %% Return all `lbm_kv' tables with local RAM copies.
-%% %%------------------------------------------------------------------------------
-%% conflicting_tables(#state{tables = Tables}) ->
-%%     LocalTables = mnesia:table_info(schema, local_tables),
-%%     [Table || Table <- LocalTables, lists:member(Table, Tables)].
-
-%% %%------------------------------------------------------------------------------
-%% %% @private
-%% %% Call the conflict handler for a table along with the offending node. If no
-%% %% conflict handler is found (exported function `resolve_conflict/1') the
-%% %% default conflict handler is invoked.
-%% %%------------------------------------------------------------------------------
-%% resolve_conflict(Node, Table) ->
-%%     case code:ensure_loaded(Table) of
-%%         {module, Table} ->
-%%             case erlang:function_exported(Table, resolve_conflict, 1) of
-%%                 true ->
-%%                     Table:resolve_conflict(Node);
-%%                 false ->
-%%                     default_resolve_conflict(Node)
-%%             end;
-%%         _ ->
-%%             default_resolve_conflict(Node)
-%%     end.
-
-%% %%------------------------------------------------------------------------------
-%% %% @private
-%% %% Default conflict resolver for inconsistent database states, e.g. after
-%% %% netsplits. This will compare the local node with the offending node with
-%% %% {@link erlang:'>'/2} and restart the greater node.
-%% %%------------------------------------------------------------------------------
-%% default_resolve_conflict(Node) ->
-%%     case node() > Node of
-%%         true ->
-%%             ?ERR("NETSPLIT DETECTED (offender ~p, restarting ~p to resolve)",
-%%                  [Node, node()]),
-%%             init:restart();
-%%         _ ->
-%%             ok
-%%     end.
+final_resolve_conflict() ->
+    ?ERR("Final conflict resolution necessary, restarting ~s...~n", [node()]),
+    init:restart().

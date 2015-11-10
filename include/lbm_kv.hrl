@@ -45,6 +45,9 @@
 %% A matcher for a raw lbm_kv table entry.
 -define(LBM_KV_LONG(Table, Key, Value, Version), {Table, Key, Value, Version}).
 
+%% Default timeout for RPC calls.
+-define(LBM_KV_RPC_TIMEOUT, 2000).
+
 %% Simple debug macro.
 -ifdef(DEBUG).
 -define(LBM_KV_DBG(Fmt, Args), io:format(Fmt, Args)).

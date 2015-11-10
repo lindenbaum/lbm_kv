@@ -25,6 +25,8 @@
 -define(TABLE, table).
 -define(NODE, master).
 
+-define(NETSPLIT_EVENT, {mnesia_system_event, {inconsistent_database, _, _}}).
+
 %%%=============================================================================
 %%% TESTS
 %%%=============================================================================
@@ -32,11 +34,14 @@
 all_test_() ->
     {foreach, setup(), teardown(),
      [
-      {timeout, 10, [fun unique_table/0]}
+      {timeout, 10, [fun unique_table/0]},
+      {timeout, 10, [fun simple_netsplit/0]}
      ]}.
 
 unique_table() ->
     process_flag(trap_exit, true),
+
+    error_logger:info_msg("TEST: ~s~n", [unique_table]),
 
     %% create table locally
     Create = fun() -> ok = lbm_kv:create(?TABLE) end,
@@ -100,31 +105,65 @@ unique_table() ->
 
     ok.
 
-%% netsplit() ->
-%%     process_flag(trap_exit, true),
+simple_netsplit() ->
+    process_flag(trap_exit, true),
 
-%%     %% start slave nodes with local replica of table
-%%     {ok, Slave1} = slave_setup(slave1),
-%%     {ok, Slave2} = slave_setup(slave2),
+    error_logger:info_msg("TEST: ~s~n", [simple_netsplit]),
 
-%%     %% start slave node without local replica of table
-%%     {ok, Slave3} = slave_setup(slave3),
+    %% start two slave nodes
+    {ok, Slave1} = slave_setup(slave1),
+    {ok, Slave2} = slave_setup(slave2),
 
-%%     ok = net_kernel:monitor_nodes(true),
+    %% create table
+    Create = fun() -> ok = lbm_kv:create(?TABLE) end,
+    Create(),
+    ?assertEqual(ok, slave_execute(Slave1, Create)),
+    ?assertEqual(ok, slave_execute(Slave2, Create)),
 
-%%     %% simualte netsplit between Slave1 and Slave2, Slave3
-%%     Netsplit = fun() ->
-%%                        true = net_kernel:disconnect(Slave2),
-%%                        true = net_kernel:disconnect(Slave3),
-%%                        true = net_kernel:connect(Slave2),
-%%                        true = net_kernel:connect(Slave3)
-%%                end,
-%%     ok = slave_execute(Slave1, Netsplit),
+    %% Put some (non-conflicting) values
+    PutValue0 = fun() -> {ok, []} = lbm_kv:put(?TABLE, node(), value0) end,
+    PutValue0(),
+    ?assertEqual(ok, slave_execute(Slave1, PutValue0)),
+    ?assertEqual(ok, slave_execute(Slave2, PutValue0)),
 
-%%     %% Expect that Slave2 gets restarted by the default conflict resolver.
-%%     %% Unfortunately, slave nodes cannot be restarted using init:restart/1,
-%%     %% so we cannot test actual recovery.
-%%     receive {nodedown, Slave2} -> ok end.
+    %% Read the values written before from all nodes
+    NumValues = length([node() | nodes()]),
+    GetValues = fun() ->
+                        {ok, Vals} = lbm_kv:match(?TABLE, '_'),
+                        NumValues = length(Vals)
+                end,
+    GetValues(),
+    ?assertEqual(ok, slave_execute(Slave1, GetValues)),
+    ?assertEqual(ok, slave_execute(Slave2, GetValues)),
+
+    PutValue1 = fun() -> {ok, _} = lbm_kv:put(?TABLE, node(), value1) end,
+
+    %% simulate netsplit between both slaves
+    Netsplit = fun() ->
+                       {ok, _} = mnesia:subscribe(system),
+                       true = net_kernel:disconnect(Slave2),
+
+                       %% Make the merge a bit more meaningful
+                       PutValue1(),
+
+                       true = net_kernel:connect(Slave2),
+                       receive ?NETSPLIT_EVENT -> ok end
+               end,
+    ok = slave_execute(Slave1, Netsplit),
+
+    PutValue1(),
+    ?assertEqual(ok, slave_execute(Slave2, PutValue1)),
+
+    %% sorry, but there's no event we can wait for...
+    timer:sleep(1000),
+
+    GetValue1 = fun(K) -> {ok, [{K, value1}]} = lbm_kv:get(?TABLE, K) end,
+    GetValues1 = fun() -> [GetValue1(N) || N <- nodes()] end,
+    GetValues1(),
+    ?assertEqual(ok, slave_execute(Slave1, GetValues1)),
+    ?assertEqual(ok, slave_execute(Slave2, GetValues1)),
+
+    ok.
 
 %%%=============================================================================
 %%% Internal functions
@@ -149,10 +188,7 @@ setup_apps() ->
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-teardown() ->
-    fun(Apps) ->
-            [application:stop(App) || App <- Apps]
-    end.
+teardown() -> fun(Apps) -> [application:stop(App) || App <- Apps] end.
 
 %%------------------------------------------------------------------------------
 %% @private

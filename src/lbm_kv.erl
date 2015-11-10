@@ -30,6 +30,7 @@
 %%% tables. If desired, it is possible to use the default Mnesia API to
 %%% manipulate `lbm_kv' tables. However, `lbm_kv' uses vector clocks that need
 %%% to be updated on every write to be able to use automatic netsplit recovery!
+%%% Use the ?LBM_KV_LONG/4 macro to match records in `lbm_kv' tables.
 %%%
 %%% Every `lbm_kv' table uses vector clocks to keep track of the its entries.
 %%% In case of new node connections or netsplits, `lbm_kv' will use these to
@@ -37,7 +38,6 @@
 %%% entries `lbm_kv' will look for a user defined callback to resolve the
 %%% conflict. If no such callback can be found one of the conflicting nodes will
 %%% be restarted!
-%%% TODO more info
 %%%
 %%% To be able to use `lbm_kv' none of the connected nodes is allowed to have
 %%% `disk_copies' of its `schema' table, because Mnesia will fail to merge
@@ -46,7 +46,8 @@
 %%% mess with table replication and mnesia configuration changes yourself!
 %%% There's a lot of black magic happening inside Mnesia and `lbm_kv' will do
 %%% the necessary tricks and workarounds for you. At best you should avoid
-%%% having tables created from outside `lbm_kv'.
+%%% having tables created from outside `lbm_kv'. At least do not create tables
+%%% with conflicting names.
 %%% @end
 %%%=============================================================================
 
@@ -97,21 +98,30 @@
 
 -export_type([table/0, key/0, value/0, version/0, update_fun/0]).
 
--define(join(LofLs), lists:append(LofLs)).
-
 -include("lbm_kv.hrl").
 
 %%%=============================================================================
 %%% Behaviour
 %%%=============================================================================
 
-%% TODO
--callback resolve_conflict(node()) -> any().
-%% Can be implemented by modules handling inconsistent DB state (as detected
-%% after netplits). When a netsplit is detected for a certain table `tab',
-%% {@link lbm_kv_mon} will look for the existence of `tab:resolve_conflict/1' to
-%% resolve the conflict. If this is not found a default conflict resolver is
-%% called. The default resolver will *restart* on of the conflicting nodes.
+-callback resolve_conflict(key(), Local :: value(), Remote :: value()) ->
+    {value, value()} | delete | term().
+%% An optional callback that will be called on the node performing a table
+%% merge (usually an arbitrary node) whenever an entry of table cannot be
+%% merged automatically. The callback must be implemented in a module with the
+%% same name as the respective table name, e.g. to handle conflicts for values
+%% in the table `my_table' the module/function `my_table:resolve_conflict/3' has
+%% to be implemented.
+%%
+%% The function can resolve conflicts in several ways. It can provide a (new)
+%% value for `Key' by returning `{value, Val}', it can delete all associations
+%% for `Key' on all nodes by returning `delete' or it can ignore the
+%% inconsistency by returning anything else or crash. When ignoring an
+%% inconsistency the values for key will depend on the location of retrieval
+%% until a new value gets written for `Key'.
+%%
+%% If an appropriate callback is not provided, the default conflict resolution
+%% strategy is to __restart__ one of the conflicting node islands!
 
 %%%=============================================================================
 %%% API
@@ -411,7 +421,7 @@ d(Tab, Key, Lock) -> mnesia:delete(Tab, Key, Lock).
 %%------------------------------------------------------------------------------
 -spec r_and_d(table(), key() | [key()]) -> [{key(), value(), version()}].
 r_and_d(Tab, Keys) when is_list(Keys) ->
-    ?join([r_and_d(Tab, Key) || Key <- Keys]);
+    lists:append([r_and_d(Tab, Key) || Key <- Keys]);
 r_and_d(Tab, Key) ->
     KeyValueVersions = r(Tab, Key, write),
     ok = d(Tab, Key, write),
@@ -423,7 +433,7 @@ r_and_d(Tab, Key) ->
 %%------------------------------------------------------------------------------
 -spec r_and_w(table(), [{key(), value()}]) -> [{key(), value(), version()}].
 r_and_w(Tab, KeyValues) ->
-    ?join([r_and_w(Tab, Key, Val) || {Key, Val} <- KeyValues]).
+    lists:append([r_and_w(Tab, Key, Val) || {Key, Val} <- KeyValues]).
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -450,7 +460,7 @@ r_and_w(Tab, Key, Val) ->
 %% transaction context.
 %%------------------------------------------------------------------------------
 -spec u(table(), update_fun()) -> [{key(), value(), version()}].
-u(Tab, Fun) -> ?join([u(Tab, Fun, Key) || Key <- mnesia:all_keys(Tab)]).
+u(Tab, Fun) -> lists:append([u(Tab, Fun, Key) || Key <- mnesia:all_keys(Tab)]).
 
 %%------------------------------------------------------------------------------
 %% @private
