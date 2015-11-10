@@ -23,7 +23,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(TABLE, table).
--define(NODE, master).
 
 -define(NETSPLIT_EVENT, {mnesia_system_event, {inconsistent_database, _, _}}).
 
@@ -174,7 +173,7 @@ simple_netsplit() ->
 %%------------------------------------------------------------------------------
 setup() ->
     fun() ->
-            ok = distribute(?NODE),
+            ok = distribute('master@localhost'),
             setup_apps()
     end.
 
@@ -196,7 +195,7 @@ teardown() -> fun(Apps) -> [application:stop(App) || App <- Apps] end.
 %%------------------------------------------------------------------------------
 distribute(Name) ->
     os:cmd("epmd -daemon"),
-    case net_kernel:start([Name]) of
+    case net_kernel:start([Name, shortnames]) of
         {ok, _}                       -> ok;
         {error, {already_started, _}} -> ok;
         Error                         -> Error
@@ -207,7 +206,7 @@ distribute(Name) ->
 %% Start a slave node and setup its environment (code path, applications, ...).
 %%------------------------------------------------------------------------------
 slave_setup(Name) ->
-    {ok, Node} = slave:start_link(hostname(), Name),
+    {ok, Node} = slave:start_link(localhost, Name),
     true = lists:member(Node, nodes()),
     slave_setup_env(Node),
     {ok, Node}.
@@ -231,8 +230,3 @@ slave_execute(Node, Fun) ->
         {'EXIT', Pid, normal} -> ok;
         {'EXIT', Pid, Reason} -> {error, Reason}
     end.
-
-%%------------------------------------------------------------------------------
-%% @private
-%%------------------------------------------------------------------------------
-hostname() -> list_to_atom(element(2, inet:gethostname())).
