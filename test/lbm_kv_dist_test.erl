@@ -204,8 +204,8 @@ resolve_conflict() ->
                        true = net_kernel:connect(OtherSlave),
                        receive ?NETSPLIT_EVENT -> ok end
                end,
-    ok = slave_execute(Slave1, fun() -> Netsplit(Slave2) end),
-    ok = slave_execute(Slave2, fun() -> Netsplit(Slave1) end),
+    ok = slave_execute(Slave1, fun() -> Netsplit(Slave2) end, no_block),
+    ok = slave_execute(Slave2, fun() -> Netsplit(Slave1) end, no_block),
 
     %% sorry, but there's no event we can wait for...
     timer:sleep(1000),
@@ -289,6 +289,11 @@ slave_setup_env(Node) ->
 %% Execute `Fun' on the given node.
 %%------------------------------------------------------------------------------
 slave_execute(Node, Fun) ->
+    slave_execute(Node, Fun, sync).
+slave_execute(Node, Fun, no_block) ->
+    spawn(Node, Fun),
+    ok;
+slave_execute(Node, Fun, _) ->
     Pid = spawn_link(Node, Fun),
     receive
         {'EXIT', Pid, normal} -> ok;
