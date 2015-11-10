@@ -210,7 +210,7 @@ resolve_conflict() ->
     %% sorry, but there's no event we can wait for...
     timer:sleep(1000),
 
-    GetKey = fun() -> {ok, []} = lbm_kv:get(?MODULE, key) end,
+    GetKey = fun() -> {ok, _} = lbm_kv:get(?MODULE, key) end,
     GetKey(),
     ok = slave_execute(Slave1, GetKey),
     ok = slave_execute(Slave2, GetKey),
