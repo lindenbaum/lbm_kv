@@ -26,6 +26,11 @@
 %%%
 %%% For more information about user defined callbacks, refer to the {@lbm_kv}
 %%% behaviour description.
+%%%
+%%% This code is inspired by the work put in the `unsplit' project by Ulf Wiger,
+%%% the man deserves some credit!
+%%%
+%%% @see https://github.com/uwiger/unsplit
 %%% @end
 %%%=============================================================================
 

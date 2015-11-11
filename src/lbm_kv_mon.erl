@@ -155,6 +155,8 @@ handle_mnesia_event(_Event, _State) ->
 %% cookie (which is always the same). However, even using this trick, special
 %% magic is needed to merge these tables. Each of these tables must be
 %% configured as RAM copy on the remote node __before__ merging the schemas.
+%%
+%% Thanks again to Ulf Wiger (`unsplit') for pointing us in the right direction.
 %%------------------------------------------------------------------------------
 expand(Node) ->
     expand(is_running(Node), Node).
@@ -254,7 +256,8 @@ connect_nodes_user_fun(TablesToMerge, Node) ->
                     %% `NewFriends' seems to be the list of nodes the local node
                     %% successfully merged its schema with (without the local
                     %% node itself). The local node is usually part of the
-                    %% `OldFriends' list. In case of asymmetric netsplits there
+                    %% `OldFriends' list. This seems to be equivalent to the
+                    %% current `db_nodes'. In case of asymmetric netsplits there
                     %% may be a non-empty intersection between the two lists.
                     %% The merge function may be called multiple times in case
                     %% additional nodes become visible by merged schemas or
