@@ -81,7 +81,7 @@ unique_table() ->
     ?assertEqual(ok, slave_execute(Slave3, GetValue)),
 
     %% Read the whole table from all nodes
-    GetAll = fun() -> {ok, [{key, value}]} = lbm_kv:match(?TABLE, '_') end,
+    GetAll = fun() -> {ok, [{key, value}]} = lbm_kv:match_key(?TABLE, '_') end,
     GetAll(),
     ?assertEqual(ok, slave_execute(Slave1, GetAll)),
     ?assertEqual(ok, slave_execute(Slave2, GetAll)),
@@ -140,7 +140,7 @@ simple_netsplit() ->
     %% Read the values written before from all nodes
     NumValues = length([node() | nodes()]),
     GetValues = fun() ->
-                        {ok, Vals} = lbm_kv:match(?TABLE, '_'),
+                        {ok, Vals} = lbm_kv:match_key(?TABLE, '_'),
                         NumValues = length(Vals)
                 end,
     GetValues(),

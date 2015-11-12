@@ -132,25 +132,27 @@ merge_entries([Key | Keys], Local, Remote, Table, Acc = {LAcc, RAcc}) ->
 %% `noop' or `{all | local | remote, {DirtyMnesiaFunction, FunctionArgs}}'.
 %%------------------------------------------------------------------------------
 merge_entry(Local, Remote, Table, Key) ->
-    case {get_entries(Local, Table, Key), get_entries(Remote, Table, Key)} of
-        {[], []} ->
+    case {get_records(Local, Table, Key), get_records(Remote, Table, Key)} of
+        {Records, Records} ->
             noop;
-        {[Entry], []} ->
-            {remote, {dirty_write, [Entry]}};
-        {[], [Entry]} ->
-            {local, {dirty_write, [Entry]}};
-        {[?LBM_KV_LONG(_, _, V, _)], [Entry = ?LBM_KV_LONG(_, _, V, _)]} ->
-            {local, {dirty_write, [Entry]}};
-        {[L = ?LBM_KV_LONG(_, _, _, LC)], [R = ?LBM_KV_LONG(_, _, _, RC)]} ->
-            case lbm_kv_vclock:descends(LC, RC) of
+        {[Record], []} ->
+            {remote, {dirty_write, [Table, Record]}};
+        {[], [Record]} ->
+            {local, {dirty_write, [Table, Record]}};
+        {[#lbm_kv{val = V}], [Record = #lbm_kv{val = V}]} ->
+            {local, {dirty_write, [Table, Record]}};
+        {[L = #lbm_kv{ver = LVer}], [R = #lbm_kv{ver = RVer}]} ->
+            case lbm_kv_vclock:descends(LVer, RVer) of
                 true ->
-                    {remote, {dirty_write, [L]}};
+                    {remote, {dirty_write, [Table, L]}};
                 false ->
-                    case lbm_kv_vclock:descends(RC, LC) of
-                        true  -> {local, {dirty_write, [R]}};
-                        false -> user_resolve_conflict(Table, Key, L, R)
+                    case lbm_kv_vclock:descends(RVer, LVer) of
+                        true  -> {local, {dirty_write, [Table, R]}};
+                        false -> user_callback(Table, Key, L, R)
                     end
             end;
+        {[LRecord], [RRecord]} ->
+            user_callback(Table, Key, LRecord, RRecord);
         {{error, Reason}, _} ->
             {error, {Local, Reason}};
         {_, {error, Reason}} ->
@@ -165,29 +167,31 @@ merge_entry(Local, Remote, Table, Key) ->
 %%
 %% For more information refer to the {@lbm_kv} behaviour description.
 %%------------------------------------------------------------------------------
-user_resolve_conflict(Table,
-                      Key,
-                      L = ?LBM_KV_LONG(_, _, LV, _),
-                      R = ?LBM_KV_LONG(_, _, RV, _)) ->
+user_callback(Table, Key, LRecord, RRecord) ->
     Error = {error, {diverged, Table, Key}},
     case code:ensure_loaded(Table) of
         {module, Table} ->
             case erlang:function_exported(Table, resolve_conflict, 3) of
                 true ->
-                    case catch Table:resolve_conflict(Key, LV, RV) of
-                        {value, LV} ->
-                            {remote, {dirty_write, [L]}};
-                        {value, RV} ->
-                            {local, {dirty_write, [R]}};
-                        {value, V} ->
-                            Clock = lbm_kv_vclock:fresh(),
-                            Version = lbm_kv_vclock:increment(node(), Clock),
-                            E = ?LBM_KV_LONG(Table, Key, V, Version),
-                            {all, {dirty_write, [E]}};
-                        delete ->
+                    LVal = get_value(LRecord),
+                    RVal = get_value(RRecord),
+                    try {Table:resolve_conflict(Key, LVal, RVal), LRecord} of
+                        {{value, LVal}, _} ->
+                            {remote, {dirty_write, [Table, LRecord]}};
+                        {{value, RVal}, _} ->
+                            {local, {dirty_write, [Table, RRecord]}};
+                        {{value, Val}, #lbm_kv{ver = OldVer}} ->
+                            Ver = lbm_kv_vclock:increment(node(), OldVer),
+                            Record = #lbm_kv{key = Key, val = Val, ver = Ver},
+                            {all, {dirty_write, [Table, Record]}};
+                        {{value, Record}, _} ->
+                            {all, {dirty_write, [Table, Record]}};
+                        {delete, _} ->
                             {all, {dirty_delete, [Table, Key]}};
                         _ ->
                             noop
+                    catch _:_ ->
+                            Error
                     end;
                 false ->
                     Error
@@ -198,9 +202,15 @@ user_resolve_conflict(Table,
 
 %%------------------------------------------------------------------------------
 %% @private
+%%------------------------------------------------------------------------------
+get_value(#lbm_kv{val = Val}) -> Val;
+get_value(Val)                -> Val.
+
+%%------------------------------------------------------------------------------
+%% @private
 %% Returns the record for `Key' on `Node'.
 %%------------------------------------------------------------------------------
-get_entries(Node, Table, Key) -> rpc_mnesia(Node, dirty_read, [Table, Key]).
+get_records(Node, Table, Key) -> rpc_mnesia(Node, dirty_read, [Table, Key]).
 
 %%------------------------------------------------------------------------------
 %% @private

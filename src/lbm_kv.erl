@@ -30,7 +30,8 @@
 %%% tables. If desired, it is possible to use the default Mnesia API to
 %%% manipulate `lbm_kv' tables. However, `lbm_kv' uses vector clocks that need
 %%% to be updated on every write to be able to use automatic netsplit recovery!
-%%% Use the ?LBM_KV_LONG/4 macro to match records in `lbm_kv' tables.
+%%% Use the `#lbm_kv{}' record from the `lbm_kv.hrl' header file to match
+%%% `lbm_kv' table entries.
 %%%
 %%% Every `lbm_kv' table uses vector clocks to keep track of the its entries.
 %%% In case of new node connections or netsplits, `lbm_kv' will use these to
@@ -63,8 +64,10 @@
          del/2,
          get/2,
          get/3,
-         match/2,
+         match_key/2,
+         match_key/3,
          match/3,
+         match/4,
          update/2,
          update/3,
          info/0]).
@@ -84,8 +87,8 @@
 %% Unfortunately, Mnesia is quite picky when it comes to allowed types for
 %% values, e.g. all special atoms of `match_specs' are not allowed and lead to
 %% undefined behaviour when used.
--opaque version() :: lbm_kv_vclock:vclock().
-%% An opaque type describing the version of a table entry.
+-type version() :: lbm_kv_vclock:vclock().
+%% A type describing the version of a table entry.
 
 -type update_fun() :: fun((key(), {value, value()} | undefined) ->
                                  {value, value()} | term()).
@@ -151,8 +154,6 @@ create(Table) ->
 %% @doc
 %% Puts a key value pair into a table returning the previous mappings. The
 %% previous mapping will be overridden if existed.
-%%
-%% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
 -spec put(table(), key(), value()) ->
@@ -163,8 +164,6 @@ put(Table, Key, Value) -> ?MODULE:put(Table, [{Key, Value}]).
 %% @doc
 %% Puts multiple key value pairs into a table returning the previous mappings.
 %% All previous mappings will be overridden.
-%%
-%% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
 -spec put(table(), [{key(), value()}]) ->
@@ -172,22 +171,18 @@ put(Table, Key, Value) -> ?MODULE:put(Table, [{Key, Value}]).
 put(_Table, []) ->
     [];
 put(Table, KeyValues) when is_list(KeyValues) ->
-    do(fun() -> strip_vs(r_and_w(Table, KeyValues)) end).
+    do(fun() -> strip(r_and_w(Table, KeyValues)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
 %% Deletes all values for the given key or list of keys from a table. Previous
 %% values for the keys will be returned.
-%%
-%% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
 -spec del(table(), key() | [key()]) ->
                  {ok, [{key(), value()}]} | {error, term()}.
-del(_Table, []) ->
-    [];
-del(Table, KeyOrKeys) ->
-    do(fun() -> strip_vs(r_and_d(Table, KeyOrKeys)) end).
+del(_Table, [])       -> [];
+del(Table, KeyOrKeys) -> do(fun() -> strip(r_and_d(Table, KeyOrKeys)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -199,39 +194,56 @@ get(Table, Key) -> get(Table, Key, transaction).
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Retrieves the value for the given key from a table. Specifying `dirty' will
+%% Retrieves the entry for the given key from a table. Specifying `dirty' will
 %% issue a faster dirty read operation (no isolation/atomicity).
-%%
-%% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
 -spec get(table(), key(), dirty | transaction) ->
                  {ok, [{key(), value()}]} | {error, term()}.
 get(Table, Key, dirty)       -> dirty_r(Table, Key);
-get(Table, Key, transaction) -> do(fun() -> strip_vs(r(Table, Key, read)) end).
+get(Table, Key, transaction) -> do(fun() -> strip(r(Table, Key, read)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Similar to {@link match/3} with `Type' set to transaction.
+%% Similar to {@link match_key/3} with `Type' set to transaction.
 %% @end
 %%------------------------------------------------------------------------------
--spec match(table(), key()) -> {ok, [{key(), value()}]} | {error, term()}.
-match(Table, KeySpec) -> match(Table, KeySpec, transaction).
+-spec match_key(table(), key()) -> {ok, [{key(), value()}]} | {error, term()}.
+match_key(Table, KeySpec) -> match_key(Table, KeySpec, transaction).
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% Retrieves the value that match the given key spec from a table. Specifying
+%% Retrieves the entries that match the given key spec from a table. Specifying
 %% `dirty' will issue a faster dirty select operation (no isolation/atomicity).
-%%
-%% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
--spec match(table(), key(), dirty | transaction) ->
+-spec match_key(table(), key(), dirty | transaction) ->
+                       {ok, [{key(), value()}]} | {error, term()}.
+match_key(Table, KeySpec, Type) -> match(Table, KeySpec, '_', Type).
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Similar to {@link match/4} with `Type' set to transaction.
+%% @end
+%%------------------------------------------------------------------------------
+-spec match(table(), key(), value()) ->
                    {ok, [{key(), value()}]} | {error, term()}.
-match(Table, KeySpec, dirty) ->
-    dirty_m(Table, KeySpec);
-match(Table, KeySpec, transaction) ->
-    do(fun() -> strip_vs(m(Table, KeySpec, read)) end).
+match(Table, KeySpec, ValueSpec) ->
+    match(Table, KeySpec, ValueSpec, transaction).
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Retrieves the entries that match the given key and value spec from a table.
+%% Specifying `dirty' will issue a faster dirty select operation (no
+%% isolation/atomicity).
+%% @end
+%%------------------------------------------------------------------------------
+-spec match(table(), key(), value(), dirty | transaction) ->
+                   {ok, [{key(), value()}]} | {error, term()}.
+match(Table, KeySpec, ValueSpec, dirty) ->
+    dirty_m(Table, KeySpec, ValueSpec);
+match(Table, KeySpec, ValueSpec, transaction) ->
+    do(fun() -> strip(m(Table, KeySpec, ValueSpec, read)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -243,14 +255,12 @@ match(Table, KeySpec, transaction) ->
 %% `{value, NewVal}', to preserve the current mapping just return a tuple with
 %% the old value. All other return values will cause the current mapping to be
 %% deleted. {@link update/2} returns a list with all previous mappings.
-%%
-%% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
 -spec update(table(), update_fun()) ->
                     {ok, [{key(), value()}]} | {error, term()}.
 update(Table, Fun) when is_function(Fun) ->
-    do(fun() -> strip_vs(u(Table, Fun)) end).
+    do(fun() -> strip(u(Table, Fun)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -265,14 +275,12 @@ update(Table, Fun) when is_function(Fun) ->
 %% the old value will simply preserve the mapping. Returning anything else will
 %% remove the mapping from the table. {@link update/3} returns a list with the
 %% previous mappings for `Key'.
-%%
-%% It is not necessary to have a local RAM copy to call this function.
 %% @end
 %%------------------------------------------------------------------------------
 -spec update(table(), key(), update_fun()) ->
                     {ok, [{key(), value()}]} | {error, term()}.
 update(Table, Key, Fun) when is_function(Fun) ->
-    do(fun() -> strip_vs(u(Table, Fun, Key)) end).
+    do(fun() -> strip(u(Table, Fun, Key)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -351,11 +359,12 @@ dirty_r(Tab, Key) -> dirty(Tab, Key, dirty_read).
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Select every entry matching `Key' from `Tab' in a dirty manner, no
-%% transaction required.
+%% Select every entry matching the given key and value spec from `Tab' in a
+%% dirty manner, no transaction required.
 %%------------------------------------------------------------------------------
--spec dirty_m(table(), key()) -> [{key(), value()}] | {error, term()}.
-dirty_m(Tab, KeySpec) -> dirty(Tab, m_spec(Tab, KeySpec), dirty_select).
+-spec dirty_m(table(), key(), value()) -> [{key(), value()}] | {error, term()}.
+dirty_m(Tab, KeySpec, ValueSpec) ->
+    dirty(Tab, m_spec(KeySpec, ValueSpec), dirty_select).
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -364,7 +373,7 @@ dirty_m(Tab, KeySpec) -> dirty(Tab, m_spec(Tab, KeySpec), dirty_select).
                    [{key(), value()}] | {error, term()}.
 dirty(Tab, Key, Function) ->
     try mnesia:Function(Tab, Key) of
-        Entries -> {ok, [{K, V} || ?LBM_KV_LONG(_, K, V, _) <- Entries]}
+        Records -> {ok, strip(Records)}
     catch
         exit:{aborted, Reason} -> {error, Reason}
     end.
@@ -373,28 +382,25 @@ dirty(Tab, Key, Function) ->
 %% @private
 %% Read `Key' from `Tab', only allowed within transaction context.
 %%------------------------------------------------------------------------------
--spec r(table(), key(), read | write) -> [{key(), value(), version()}].
-r(Tab, Key, Lock) ->
-    [?LBM_KV_SHORT(K, V, Vs)
-     || ?LBM_KV_LONG(_, K, V, Vs)
-            <- mnesia:read(Tab, Key, Lock)].
+-spec r(table(), key(), read | write) -> [#lbm_kv{}].
+r(Tab, Key, Lock) -> mnesia:read(Tab, Key, Lock).
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Read every entry matching `Key' from `Tab', only allowed within transaction
+%% Read every entry matching the given key and value specs from `Tab', only
+%% allowed within transaction
 %% context.
 %%------------------------------------------------------------------------------
--spec m(table(), key(), read | write) -> [{key(), value(), version()}].
-m(Tab, KeySpec, Lock) ->
-    [?LBM_KV_SHORT(K, V, Vs)
-     || ?LBM_KV_LONG(_, K, V, Vs)
-            <- mnesia:select(Tab, m_spec(Tab, KeySpec), Lock)].
+-spec m(table(), key(), value(), read | write) -> [#lbm_kv{}].
+m(Tab, KeySpec, ValueSpec, Lock) ->
+    mnesia:select(Tab, m_spec(KeySpec, ValueSpec), Lock).
 
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
--spec m_spec(table(), key()) -> [tuple()].
-m_spec(Tab, KeySpec) -> [{?LBM_KV_LONG(Tab, KeySpec, '_', '_'), [], ['$_']}].
+-spec m_spec(key(), value()) -> [tuple()].
+m_spec(KeySpec, ValueSpec) ->
+    [{#lbm_kv{key = KeySpec, val = ValueSpec, _ = '_'}, [], ['$_']}].
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -402,9 +408,9 @@ m_spec(Tab, KeySpec) -> [{?LBM_KV_LONG(Tab, KeySpec, '_', '_'), [], ['$_']}].
 %% context.
 %%------------------------------------------------------------------------------
 -spec w(table(), key(), value(), version()) -> ok.
-w(Tab, Key, Val, Vs) ->
-    NewVs = lbm_kv_vclock:increment(node(), Vs),
-    mnesia:write({Tab, Key, Val, NewVs}).
+w(Tab, Key, Val, Ver) ->
+    NewVer = lbm_kv_vclock:increment(node(), Ver),
+    mnesia:write(Tab, #lbm_kv{key = Key, val = Val, ver = NewVer}, write).
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -419,19 +425,19 @@ d(Tab, Key, Lock) -> mnesia:delete(Tab, Key, Lock).
 %% Read all mappings for `Key' or `Keys' in `Tab', delete them and return the
 %% previous mappings. Only allowed within transaction context.
 %%------------------------------------------------------------------------------
--spec r_and_d(table(), key() | [key()]) -> [{key(), value(), version()}].
+-spec r_and_d(table(), key() | [key()]) -> [#lbm_kv{}].
 r_and_d(Tab, Keys) when is_list(Keys) ->
     lists:append([r_and_d(Tab, Key) || Key <- Keys]);
 r_and_d(Tab, Key) ->
-    KeyValueVersions = r(Tab, Key, write),
+    Records = r(Tab, Key, write),
     ok = d(Tab, Key, write),
-    KeyValueVersions.
+    Records.
 
 %%------------------------------------------------------------------------------
 %% @private
 %% Similar to {@link r_and_w/3} but operates on an input list.
 %%------------------------------------------------------------------------------
--spec r_and_w(table(), [{key(), value()}]) -> [{key(), value(), version()}].
+-spec r_and_w(table(), [{key(), value()}]) -> [#lbm_kv{}].
 r_and_w(Tab, KeyValues) ->
     lists:append([r_and_w(Tab, Key, Val) || {Key, Val} <- KeyValues]).
 
@@ -441,45 +447,44 @@ r_and_w(Tab, KeyValues) ->
 %% `Val' and return the previous mappings. Only allowed within transaction
 %% context.
 %%------------------------------------------------------------------------------
--spec r_and_w(table(), key(), value()) -> [{key(), value(), version()}].
+-spec r_and_w(table(), key(), value()) -> [#lbm_kv{}].
 r_and_w(Tab, Key, Val) ->
     case r(Tab, Key, write) of
-        KeyValueVersions = [?LBM_KV_SHORT(Key, Val, _) | _] ->
+        Records = [#lbm_kv{key = Key, val = Val} | _] ->
             ok; %% no change, no write
-        KeyValueVersions = [?LBM_KV_SHORT(Key, _, Vs) | _] ->
-            ok = w(Tab, Key, Val, Vs);
-        KeyValueVersions = [] ->
+        Records = [#lbm_kv{key = Key, ver = Ver} | _] ->
+            ok = w(Tab, Key, Val, Ver);
+        Records = [] ->
             ok = w(Tab, Key, Val, lbm_kv_vclock:fresh())
     end,
-    KeyValueVersions.
-
+    Records.
 
 %%------------------------------------------------------------------------------
 %% @private
 %% Update the mappings for all `Key's in a table. Only allowed within
 %% transaction context.
 %%------------------------------------------------------------------------------
--spec u(table(), update_fun()) -> [{key(), value(), version()}].
+-spec u(table(), update_fun()) -> [#lbm_kv{}].
 u(Tab, Fun) -> lists:append([u(Tab, Fun, Key) || Key <- mnesia:all_keys(Tab)]).
 
 %%------------------------------------------------------------------------------
 %% @private
 %% Update the mapping for `Key'. Only allowed within transaction context.
 %%------------------------------------------------------------------------------
--spec u(table(), update_fun(), key()) -> [{key(), value(), version()}].
+-spec u(table(), update_fun(), key()) -> [#lbm_kv{}].
 u(Tab, Fun, Key) ->
     case r(Tab, Key, write) of
-        KeyValueVersions = [?LBM_KV_SHORT(Key, Val, Vs) | _] ->
+        Records = [#lbm_kv{key = Key, val = Val, ver = Ver} | _] ->
             case Fun(Key, {value, Val}) of
                 {value, Val} ->
                     ok; %% no change, no write
                 {value, NewVal} ->
                     ok = d(Tab, Key, write),
-                    ok = w(Tab, Key, NewVal, Vs);
+                    ok = w(Tab, Key, NewVal, Ver);
                 _ ->
                     ok = d(Tab, Key, write)
             end;
-        KeyValueVersions = [] ->
+        Records = [] ->
             case Fun(Key, undefined) of
                 {value, Val} ->
                     ok = w(Tab, Key, Val, lbm_kv_vclock:fresh());
@@ -487,10 +492,10 @@ u(Tab, Fun, Key) ->
                     ok
             end
     end,
-    KeyValueVersions.
+    Records.
 
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
-strip_vs(KeyValueVersions) ->
-    [{K, V} || ?LBM_KV_SHORT(K, V, _) <- KeyValueVersions].
+-spec strip([#lbm_kv{}]) -> [{key(), value()}].
+strip(Records) -> [{K, V} || #lbm_kv{key = K, val = V} <- Records].

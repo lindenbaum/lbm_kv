@@ -21,8 +21,11 @@
 -ifndef(lbm_kv_hrl_).
 -define(lbm_kv_hrl_, 1).
 
-%% All lbm_kv have a version field in addition to the default attributes.
--define(LBM_KV_ATTRS, [key, val, version]).
+%% The record defining an `lbm_kv' table entry.
+-record(lbm_kv, {
+          key :: lbm_kv:key() | '_',
+          val :: lbm_kv:value() | '_',
+          ver :: lbm_kv:version() | '_'}).
 
 %% A special define using a `hidden' mnesia feature to set the `cookie' of a
 %% table (at creation time only). This is needed to be able to merge schemas
@@ -35,15 +38,10 @@
 -define(LBM_KV_COOKIE, {{0,0,0}, lbm_kv}).
 
 %% The options used in `mnesia:create_table/2'.
--define(LBM_KV_TABLE_OPTS(), [{attributes, ?LBM_KV_ATTRS},
+-define(LBM_KV_TABLE_OPTS(), [{record_name, lbm_kv},
+                              {attributes, record_info(fields, lbm_kv)},
                               {cookie, ?LBM_KV_COOKIE},
                               {ram_copies, [node() | nodes()]}]).
-
-%% A matcher for preprocessed lbm_kv table entries.
--define(LBM_KV_SHORT(Key, Value, Version), {Key, Value, Version}).
-
-%% A matcher for a raw lbm_kv table entry.
--define(LBM_KV_LONG(Table, Key, Value, Version), {Table, Key, Value, Version}).
 
 %% Default timeout for RPC calls.
 -define(LBM_KV_RPC_TIMEOUT, 2000).
