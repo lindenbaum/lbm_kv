@@ -3,52 +3,61 @@
 lbm_kv
 ======
 
-A simple, lightweight application hiding the dirty details/pitfalls of
-distributed Mnesia tables. Furthermore it provides a primitive API to use
-Mnesia tables as distributed/RAM-only key-value-storage.
+A dynamically-distributed, highly-available, partition-tolerant, in-memory
+key-value store built with [Mnesia](http://www.erlang.org/doc/apps/mnesia/).
 
 One of the main goals of this application is to enable developers to enjoy the
 pleasures of distributed Mnesia without the need of exploring the complex
-background.
+background. Therefore, `lbm_kv` provides a primitive API along with code to
+handle and work around the dirty details and pitfals related to distributed
+Mnesia.
 
-What does it do?
-----------------
+Why use it?
+-----------
 
-When you start the `lbm_kv` application it ensures that the Mnesia `schema`
-table is distributed among the connected cluster nodes (as RAM-only copy). This
-is the main requirement for distributed Mnesia. It is not necessary to know the
-cluster topology in advance, since `lbm_kv` can handle dynamic clusters. In this
-initial state, all you have is distributed Mnesia. That means no tables are
-created behind the scenes. Any existing Mnesia table can be accessed from all
-connected nodes.
+Mnesia is a powerful DBMS with support for table replication, transactions,
+netsplit detection and much more. _So why use something on top of it?_
+Unfortunately, as with other powerful DBMSs its use is quite complex and making
+a Mnesia cluster dynamic requires a lot of research and the use of
+_undocumented_ features. `lbm_kv` is here to release you from this pain.
 
-Creating tables
----------------
+What does lbm_kv offer?
+-----------------------
 
-Calling `lbm_kv:create(Table)` will create a new, local, RAM-only
-key-value-store with the name `Table`. This table/store can immediately be
-accessed from all nodes in the cluster. For redundancy or speed this table/store
-can be replicated to other nodes in the cluster either by calling
-`lbm_kv:replicate_to(Table, Node)` from any node or by calling
-`lbm_kv:create(Table)` on the node you wish to replicate to.
+* Mnesia replication management in dynamic Erlang clusters
+* automated table merges and netsplit recovery based on
+  [vector clocks](https://en.wikipedia.org/wiki/Vector_clock) and user-provided
+  callbacks
+* a primitive and (hopefully) intuitive API
+* small, documented, fully-typed code-base
+* no additional/transitive dependencies introduced
 
-Actually, both functions will create the table `Table` storing tuples of the
-form `{Table, Key :: lbm_kv:key(), Value :: lbm_kv:value()}`. Of course, you can
-modify the table with the `lbm_kv` or the ordinary Mnesia API.
+How does it work?
+-----------------
 
-Netsplits/Inconsistency conditions
-----------------------------------
+`lbm_kv` is a simple Erlang application that gets dropped into your release. It
+is not necessary to know the cluster topology in advance, since `lbm_kv` can
+handle dynamic clusters. It listens for new node connections and replicates all
+its tables to the new nodes. When connected nodes go down, `lbm_kv`
+automatically shrinks the Mnesia cluster to the remaining nodes preserving the
+writability to its tables. The user decides when and what tables to create, no
+internal tables are created behind the scenes.
 
-Mnesia does recognize conditions of inconsistency, e.g. after netsplits.
-However, Mnesia doesn't handle those conditions. Since this is a field of
-research on its own, `lbm_kv` provides only the simplest of all mechanisms.
+`lbm_kv' is able to merge tables automatically (based on lamport/vector clocks).
+This is needed when a netsplit gets resolved or when the same table gets created
+on several nodes independently (not a special case for `lbm_kv'). If `lbm_kv'
+cannot merge two table entries itself, it will look for a user-defined callback
+to help with the merge. This `resolve_conflict/3' callback is specified in the
+`lbm_kv' behaviour and needs to reside in a module with the same name as the
+table to merge values for, e.g. if your table is called `my_table' the callback
+to implement would be `my_table:resolve_conflict/3'.
 
-If Mnesia detects a DB inconsistency, `lbm_kv` will check whether one of its
-tables/stores is affected. If this is the case `lbm_kv` will deterministically
-__restart__ one of the offending nodes using `init:restart/0` (you can look at
-the exact condition in `lbm_kv_mon:default_resolve_conflict/1`). Of course, this
-may not be the desired behaviour for all use-cases. Therefore, `lbm_kv` offers
-the possibility to change this (on a per table basis). To implement a custom
-conflict resolver for a table `Table`, create a module `Table` that implements
-the `lbm_kv` behaviour. However, be aware that __if only one table exists
-without custom conflict resolver__ a node may get restarted anyway!
+If no appropriate callback is found or the callback throws an exception during
+the conflict resolution, `lbm_kv' will deterministically __restart__ one of the
+offending nodes using `init:restart/0` (the restarted node will be the one that
+tried to perform the merge).
+
+Examples
+--------
+
+A simple example application is on its way and will be referenced here soon.

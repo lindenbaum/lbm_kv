@@ -151,7 +151,7 @@ merge_entry(Local, Remote, Table, Key) ->
                         false -> user_callback(Table, Key, L, R)
                     end
             end;
-        {[LRecord], [RRecord]} ->
+        {[LRecord], [RRecord]} -> %% merging non-lbm_kv table
             user_callback(Table, Key, LRecord, RRecord);
         {{error, Reason}, _} ->
             {error, {Local, Reason}};
@@ -166,6 +166,10 @@ merge_entry(Local, Remote, Table, Key) ->
 %% schemas).
 %%
 %% For more information refer to the {@lbm_kv} behaviour description.
+%%
+%% Why is this function written as it is (no pattern matching on #lbm_kv{})?
+%% This hidden feature could (in the future) be used to call the user-provided
+%% callback to merge non-lbm_kv tables ;)
 %%------------------------------------------------------------------------------
 user_callback(Table, Key, LRecord, RRecord) ->
     Error = {error, {diverged, Table, Key}},

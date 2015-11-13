@@ -176,7 +176,7 @@ simple_netsplit() ->
 
     ok.
 
-%% Due to race conditions this test may sometimes produce false positives.
+%% Due to concurrency this test may produce false positives non-deterministically.
 resolve_conflict() ->
     process_flag(trap_exit, true),
 
