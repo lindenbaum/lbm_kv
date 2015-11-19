@@ -169,7 +169,7 @@ put(Table, Key, Value) -> ?MODULE:put(Table, [{Key, Value}]).
 -spec put(table(), [{key(), value()}]) ->
                  {ok, [{key(), value()}]} | {error, term()}.
 put(_Table, []) ->
-    [];
+    {ok, []};
 put(Table, KeyValues) when is_list(KeyValues) ->
     do(fun() -> strip(r_and_w(Table, KeyValues)) end).
 
@@ -181,7 +181,7 @@ put(Table, KeyValues) when is_list(KeyValues) ->
 %%------------------------------------------------------------------------------
 -spec del(table(), key() | [key()]) ->
                  {ok, [{key(), value()}]} | {error, term()}.
-del(_Table, [])       -> [];
+del(_Table, [])       -> {ok, []};
 del(Table, KeyOrKeys) -> do(fun() -> strip(r_and_d(Table, KeyOrKeys)) end).
 
 %%------------------------------------------------------------------------------
