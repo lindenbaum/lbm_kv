@@ -57,6 +57,11 @@ the conflict resolution, `lbm_kv` will deterministically __restart__ one of the
 offending nodes using `init:restart/0` (the restarted node will be the one that
 tried to perform the merge).
 
+Please note that a merge cannot delete values (except for the case when the
+user callback gets involved). This means that if a mapping gets deleted during
+a netsplit, the mapping might get re-established when the netsplit gets
+resolved.
+
 Examples
 --------
 
