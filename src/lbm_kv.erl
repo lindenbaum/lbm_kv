@@ -339,12 +339,23 @@ await_table(Table) ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Spawns `Fun' in a mnesia transaction.
+%% Spawns `Fun' in a mnesia transaction. If aborted, a transaction may be
+%% retried depending on the values set in the application environment. A
+%% transaction abort might take place when replica nodes go down/up. In this
+%% case retries could be successful because of the automatic replica management.
+%% Retries are off by default.
 %%------------------------------------------------------------------------------
 do(Fun) ->
+    do(Fun,
+       application:get_env(?MODULE, retry_timeout, 500),
+       application:get_env(?MODULE, retries, 0)).
+do(Fun, Timeout, Retries) ->
     case mnesia:transaction(Fun) of
         {atomic, Result} ->
             {ok, Result};
+        {aborted, _} when Retries > 0 ->
+            ok = timer:sleep(Timeout),
+            do(Fun, Timeout, Retries - 1);
         {aborted, Reason} ->
             {error, Reason}
     end.
