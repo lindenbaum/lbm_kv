@@ -47,10 +47,10 @@ internal tables are created behind the scenes.
 This is needed when a netsplit gets resolved or when the same table gets created
 on several nodes independently (not a special case for `lbm_kv`). If `lbm_kv`
 cannot merge two table entries itself, it will look for a user-defined callback
-to help with the merge. This `resolve_conflict/3` callback is specified in the
+to help with the merge. This `handle_conflict/3` callback is specified in the
 `lbm_kv` behaviour and needs to reside in a module with the same name as the
 table to merge values for, e.g. if your table is called `my_table` the callback
-to implement would be `my_table:resolve_conflict/3`.
+to implement would be `my_table:handle_conflict/3`.
 
 If no appropriate callback is found or the callback throws an exception during
 the conflict resolution, `lbm_kv` will deterministically __restart__ one of the

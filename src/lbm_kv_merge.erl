@@ -161,7 +161,7 @@ merge_entry(Local, Remote, Table, Key) ->
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Call a user provided function to resolve a conflicting entry. This can happen
+%% Call a user provided function to handle a conflicting entry. This can happen
 %% on an arbitrary node (the one that connects the nodes and merges the
 %% schemas).
 %%
@@ -174,11 +174,11 @@ merge_entry(Local, Remote, Table, Key) ->
 user_callback(Table, Key, LRecord, RRecord) when is_atom(Table) ->
     case code:ensure_loaded(Table) of
         {module, Table} ->
-            case erlang:function_exported(Table, resolve_conflict, 3) of
+            case erlang:function_exported(Table, handle_conflict, 3) of
                 true ->
                     LVal = get_value(LRecord),
                     RVal = get_value(RRecord),
-                    try {Table:resolve_conflict(Key, LVal, RVal), LRecord} of
+                    try {Table:handle_conflict(Key, LVal, RVal), LRecord} of
                         {{value, LVal}, _} ->
                             {remote, {dirty_write, [Table, LRecord]}};
                         {{value, RVal}, _} ->

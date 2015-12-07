@@ -107,13 +107,13 @@
 %%% Behaviour
 %%%=============================================================================
 
--callback resolve_conflict(key(), Local :: value(), Remote :: value()) ->
+-callback handle_conflict(key(), Local :: value(), Remote :: value()) ->
     {value, value()} | delete | term().
 %% An optional callback that will be called on the node performing a table
 %% merge (usually an arbitrary node) whenever an entry of table cannot be
 %% merged automatically. The callback must be implemented in a module with the
 %% same name as the respective table name, e.g. to handle conflicts for values
-%% in the table `my_table' the module/function `my_table:resolve_conflict/3' has
+%% in the table `my_table' the module/function `my_table:handle_conflict/3' has
 %% to be implemented.
 %%
 %% The function can resolve conflicts in several ways. It can provide a (new)

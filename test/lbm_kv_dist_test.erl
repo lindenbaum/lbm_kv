@@ -22,7 +22,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([resolve_conflict/3]).
+-export([handle_conflict/3]).
 
 -define(TABLE, table).
 
@@ -44,7 +44,7 @@ all_test_() ->
 additional_test_() ->
     {foreach, setup(), teardown(),
      [
-      {timeout, 10, [fun resolve_conflict/0]}
+      {timeout, 10, [fun handle_conflict/0]}
      ]}.
 
 -endif.
@@ -177,10 +177,10 @@ simple_netsplit() ->
     ok.
 
 %% Due to concurrency this test may produce false positives non-deterministically.
-resolve_conflict() ->
+handle_conflict() ->
     process_flag(trap_exit, true),
 
-    error_logger:info_msg("TEST: ~s~n", [resolve_conflict]),
+    error_logger:info_msg("TEST: ~s~n", [handle_conflict]),
 
     %% start two slave nodes
     {ok, Slave1} = slave_setup(slave1),
@@ -231,10 +231,10 @@ resolve_conflict() ->
 
     ok.
 
-%% custom conflict resolution for resolve_conflict/0 test.
-resolve_conflict(key, _Local, Remote) ->
+%% custom conflict resolution for handle_conflict/0 test.
+handle_conflict(key, _Local, Remote) ->
     {value, Remote};
-resolve_conflict(other, _Local, _Remote) ->
+handle_conflict(other, _Local, _Remote) ->
     {value, new}.
 
 %%%=============================================================================

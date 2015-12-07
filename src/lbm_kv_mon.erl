@@ -133,7 +133,7 @@ terminate(_Reason, _State) -> ok.
 handle_mnesia_event({mnesia_fatal, Format, Args, BinaryCore}, _State) ->
     ?ERR("Fatal condition: " ++ Format, Args),
     file:write_file(?DUMP, BinaryCore),
-    final_resolve_conflict();
+    handle_unresolved_conflict();
 handle_mnesia_event({mnesia_info, Format, Args}, _State) ->
     ?INFO(Format, Args);
 handle_mnesia_event(_Event, _State) ->
@@ -231,7 +231,7 @@ connect_nodes(Node, LocalTables, LocalOnlyTables, RemoteOnlyTables) ->
             ?ERR("Failed to connect to ~s: ~p~n", [Node, Error]),
 
             %% last resort
-            final_resolve_conflict()
+            handle_unresolved_conflict()
     end.
 
 %%------------------------------------------------------------------------------
@@ -384,6 +384,6 @@ rpc_mnesia(Node, Function, Args) ->
 %% Final conflict resolver for inconsistent database states, e.g. after
 %% netsplits. This will simply restart the local node.
 %%------------------------------------------------------------------------------
-final_resolve_conflict() ->
+handle_unresolved_conflict() ->
     ?ERR("Final conflict resolution necessary, restarting ~s...~n", [node()]),
     init:restart().
