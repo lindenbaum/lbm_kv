@@ -193,7 +193,10 @@ user_callback(Table, Key, LRecord, RRecord) when is_atom(Table) ->
                             {all, {dirty_delete, [Table, Key]}};
                         _ ->
                             noop
-                    catch _:_ ->
+                    catch Class:Exception ->
+                            error_logger:error_msg(
+                              "~w:handle_conflict/3 raised ~w on key ~w: ~p",
+                              [Table, Class, Key, Exception]),
                             {error, {diverged, Table, Key}}
                     end;
                 false ->

@@ -302,7 +302,7 @@ reduce(Node) ->
                 {atomic, ok} ->
                     ?INFO("Successfully disconnected from ~s~n", [Node]);
                 Error = {aborted, _} ->
-                    ?ERR("Failed to remove schema from ~s: ~w~n", [Node, Error])
+                    ?ERR("Failed to remove schema from ~s: ~p~n", [Node, Error])
             end;
         false ->
             %% The disconnected node is not part of the seen `db_nodes' anymore,
