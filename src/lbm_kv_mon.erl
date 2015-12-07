@@ -298,8 +298,12 @@ reduce(Node) ->
         true ->
             %% Remove the disconnected node from the global schema. This will
             %% remove all ram copies copied onto this node (for all tables).
-            mnesia:del_table_copy(schema, Node),
-            ok;
+            case mnesia:del_table_copy(schema, Node) of
+                {atomic, ok} ->
+                    ?INFO("Successfully disconnected from ~s~n", [Node]);
+                Error = {aborted, _} ->
+                    ?ERR("Failed to remove schema from ~s: ~w~n", [Node, Error])
+            end;
         false ->
             %% The disconnected node is not part of the seen `db_nodes' anymore,
             %% someone else did the work or the node did never participate.
@@ -314,11 +318,11 @@ is_running(Node) -> rpc_mnesia(Node, system_info, [is_running]) =:= yes.
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Add RAM copies of all `Tables' at `FromNode' to `ToNode'.
+%% Add RAM copies of all `Tables' at `FromNode' to `ToNode'. Crashes, if a table
+%% cannot be replicated.
 %%------------------------------------------------------------------------------
 add_table_copies(FromNode, ToNode, Tables) ->
-    [ok = add_table_copy(FromNode, ToNode, T) || T <- Tables],
-    ok.
+    [ok = add_table_copy(FromNode, ToNode, T) || T <- Tables].
 
 %%------------------------------------------------------------------------------
 %% @private
