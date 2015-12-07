@@ -171,8 +171,7 @@ merge_entry(Local, Remote, Table, Key) ->
 %% This hidden feature could (in the future) be used to call the user-provided
 %% callback to merge non-lbm_kv tables ;)
 %%------------------------------------------------------------------------------
-user_callback(Table, Key, LRecord, RRecord) ->
-    Error = {error, {diverged, Table, Key}},
+user_callback(Table, Key, LRecord, RRecord) when is_atom(Table) ->
     case code:ensure_loaded(Table) of
         {module, Table} ->
             case erlang:function_exported(Table, resolve_conflict, 3) of
@@ -195,14 +194,16 @@ user_callback(Table, Key, LRecord, RRecord) ->
                         _ ->
                             noop
                     catch _:_ ->
-                            Error
+                            {error, {diverged, Table, Key}}
                     end;
                 false ->
-                    Error
+                    {error, {diverged, Table, Key}}
             end;
         _ ->
-            Error
-    end.
+            {error, {diverged, Table, Key}}
+    end;
+user_callback(Table, Key, _, _) ->
+    {error, {diverged, Table, Key}}.
 
 %%------------------------------------------------------------------------------
 %% @private
