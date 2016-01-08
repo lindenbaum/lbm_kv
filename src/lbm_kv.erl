@@ -141,7 +141,7 @@
 %%------------------------------------------------------------------------------
 -spec create(table()) -> ok | {error, term()}.
 create(Table) ->
-    case mnesia:create_table(Table, ?LBM_KV_TABLE_OPTS()) of
+    case mnesia:create_table(Table, ?LBM_KV_TABLE_OPTS) of
         {atomic, ok} ->
             await_table(Table);
         {aborted, {already_exists, Table}} ->

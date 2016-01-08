@@ -90,8 +90,8 @@ merge_table(Remote, Table) ->
     Keys = get_all_keys([node(), Remote], Table),
     case merge_entries(Keys, node(), Remote, Table, {[], []}) of
         {ok, {LocalActions, RemoteActions}} ->
-            case rpc_actions(Remote, RemoteActions) of
-                ok    -> rpc_actions(node(), LocalActions);
+            case rpc_merge(Remote, RemoteActions) of
+                ok    -> handle_actions(LocalActions);
                 Error -> Error
             end;
         Error ->
@@ -195,7 +195,7 @@ user_callback(Table, Key, LRecord, RRecord) when is_atom(Table) ->
                             noop
                     catch Class:Exception ->
                             error_logger:error_msg(
-                              "~w:handle_conflict/3 raised ~w on key ~w: ~p",
+                              "~w:handle_conflict/3 raised ~w on key ~w: ~w",
                               [Table, Class, Key, Exception]),
                             {error, {diverged, Table, Key}}
                     end;
@@ -233,17 +233,40 @@ get_all_keys(Nodes, Table) ->
 %% when a call is local and optimizes that.
 %%------------------------------------------------------------------------------
 rpc_mnesia(Node, Function, Args) ->
-    check_rpc(rpc:call(Node, mnesia, Function, Args, ?LBM_KV_RPC_TIMEOUT)).
+    Timeout = application:get_env(lbm_kv, rpc_timeout, ?LBM_KV_RPC_TIMEOUT),
+    check_rpc(rpc:call(Node, mnesia, Function, Args, Timeout)).
 
 %%------------------------------------------------------------------------------
 %% @private
-%% Make an RPC call to this module on `Node' handing over merge actions.
+%% Make subsequent RPC calls to this module on `Node' handing over merge
+%% actions in batches of a configurable size. This is done to limit the size
+%% of terms sent over the distributed erlang connection. Not doing so might
+%% result in connection loss due to inter-node heartbeats timing out.
 %%------------------------------------------------------------------------------
-rpc_actions(_Node, []) ->
+rpc_merge(Node, Actions) ->
+    BatchSize = application:get_env(lbm_kv, batch_size, 10),
+    Timeout = application:get_env(lbm_kv, rpc_timeout, ?LBM_KV_RPC_TIMEOUT),
+    rpc_merge(Node, Actions, BatchSize, Timeout + BatchSize * 200).
+rpc_merge(_Node, [], _BatchSize, _Timeout) ->
     ok;
-rpc_actions(Node, Actions) ->
-    Timeout = ?LBM_KV_RPC_TIMEOUT + length(Actions) * 100,
-    check_rpc(rpc:call(Node, ?MODULE, handle_actions, [Actions], Timeout)).
+rpc_merge(Node, Actions, BatchSize, Timeout) ->
+    {Current, Remaining} = split(BatchSize, Actions),
+    case rpc:call(Node, ?MODULE, handle_actions, [Current], Timeout) of
+        ok     -> rpc_merge(Node, Remaining, BatchSize, Timeout);
+        Result -> check_rpc(Result)
+    end.
+
+%%------------------------------------------------------------------------------
+%% @private
+%% Similar to {@link lists:split/2}. However, it is not an error when `N'
+%% exceeds the length of the list.
+%%------------------------------------------------------------------------------
+split(N, List) ->
+    try
+        lists:split(N, List)
+    catch
+        error:badarg -> {List, []}
+    end.
 
 %%------------------------------------------------------------------------------
 %% @private

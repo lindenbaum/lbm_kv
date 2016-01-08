@@ -228,7 +228,7 @@ connect_nodes(Node, LocalTables, LocalOnlyTables, RemoteOnlyTables) ->
 
             ?INFO("Successfully connected to ~s~n", [Node]);
         Error ->
-            ?ERR("Failed to connect to ~s: ~p~n", [Node, Error]),
+            ?ERR("Failed to connect to ~s: ~w~n", [Node, Error]),
 
             %% last resort
             handle_unresolved_conflict()
@@ -302,7 +302,8 @@ reduce(Node) ->
                 {atomic, ok} ->
                     ?INFO("Successfully disconnected from ~s~n", [Node]);
                 Error = {aborted, _} ->
-                    ?ERR("Failed to remove schema from ~s: ~p~n", [Node, Error])
+                    ?LBM_KV_DBG("Failed to remove schema from ~s: ~w~n",
+                                [Node, Error])
             end;
         false ->
             %% The disconnected node is not part of the seen `db_nodes' anymore,
@@ -378,7 +379,8 @@ get_db_nodes(Node) -> rpc_mnesia(Node, system_info, [db_nodes]).
 %% when a call is local and optimizes that.
 %%------------------------------------------------------------------------------
 rpc_mnesia(Node, Function, Args) ->
-    case rpc:call(Node, mnesia, Function, Args, ?LBM_KV_RPC_TIMEOUT) of
+    Timeout = application:get_env(lbm_kv, rpc_timeout, ?LBM_KV_RPC_TIMEOUT),
+    case rpc:call(Node, mnesia, Function, Args, Timeout) of
         {badrpc, Reason} -> {error, Reason};
         Result           -> Result
     end.

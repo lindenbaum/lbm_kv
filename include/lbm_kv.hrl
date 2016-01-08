@@ -38,10 +38,10 @@
 -define(LBM_KV_COOKIE, {{0,0,0}, lbm_kv}).
 
 %% The options used in `mnesia:create_table/2'.
--define(LBM_KV_TABLE_OPTS(), [{record_name, lbm_kv},
-                              {attributes, record_info(fields, lbm_kv)},
-                              {cookie, ?LBM_KV_COOKIE},
-                              {ram_copies, [node() | nodes()]}]).
+-define(LBM_KV_TABLE_OPTS, [{record_name, lbm_kv},
+                            {attributes, record_info(fields, lbm_kv)},
+                            {cookie, ?LBM_KV_COOKIE},
+                            {ram_copies, [node() | nodes()]}]).
 
 %% Default timeout for RPC calls.
 -define(LBM_KV_RPC_TIMEOUT, 2000).
