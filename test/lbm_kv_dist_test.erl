@@ -22,8 +22,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([handle_conflict/3]).
-
 -define(TABLE, table).
 
 -define(NETSPLIT_EVENT, {mnesia_system_event, {inconsistent_database, _, _}}).
@@ -38,16 +36,6 @@ all_test_() ->
       {timeout, 10, [fun unique_table/0]},
       {timeout, 10, [fun simple_netsplit/0]}
      ]}.
-
--ifndef(TRAVIS_CI).
-
-additional_test_() ->
-    {foreach, setup(), teardown(),
-     [
-      {timeout, 10, [fun handle_conflict/0]}
-     ]}.
-
--endif.
 
 unique_table() ->
     process_flag(trap_exit, true),
@@ -175,67 +163,6 @@ simple_netsplit() ->
     ?assertEqual(ok, slave_execute(Slave2, GetValues1)),
 
     ok.
-
-%% Due to concurrency this test may produce false positives non-deterministically.
-handle_conflict() ->
-    process_flag(trap_exit, true),
-
-    error_logger:info_msg("TEST: ~s~n", [handle_conflict]),
-
-    %% start two slave nodes
-    {ok, Slave1} = slave_setup(slave1),
-    {ok, Slave2} = slave_setup(slave2),
-
-    %% create table
-    Create = fun() -> ok = lbm_kv:create(?MODULE) end,
-    Create(),
-    ?assertEqual(ok, slave_execute(Slave1, Create)),
-    ?assertEqual(ok, slave_execute(Slave2, Create)),
-
-    %% Put the key from local node
-    PutKey = fun() -> {ok, _} = lbm_kv:put(?MODULE, key, value) end,
-    PutKey(),
-
-    %% Ensure the key from slaves
-    EnsureKey = fun() -> {ok, _} = lbm_kv:get(?MODULE, key) end,
-    ?assertEqual(ok, slave_execute(Slave1, EnsureKey)),
-    ?assertEqual(ok, slave_execute(Slave2, EnsureKey)),
-
-    PutOther = fun() -> {ok, _} = lbm_kv:put(?MODULE, other, node()) end,
-
-    %% simulate netsplit between both slaves
-    Netsplit = fun(OtherSlave) ->
-                       {ok, _} = mnesia:subscribe(system),
-                       true = net_kernel:disconnect(OtherSlave),
-
-                       PutOther(),
-
-                       true = net_kernel:connect(OtherSlave),
-                       receive ?NETSPLIT_EVENT -> ok end
-               end,
-    ok = slave_execute(Slave1, fun() -> Netsplit(Slave2) end, no_block),
-    ok = slave_execute(Slave2, fun() -> Netsplit(Slave1) end, no_block),
-
-    %% sorry, but there's no event we can wait for...
-    timer:sleep(1000),
-
-    GetKey = fun() -> {ok, [{key, value}]} = lbm_kv:get(?MODULE, key) end,
-    GetKey(),
-    ok = slave_execute(Slave1, GetKey),
-    ok = slave_execute(Slave2, GetKey),
-
-    GetOther = fun() -> {ok, [{other, new}]} = lbm_kv:get(?MODULE, other) end,
-    GetOther(),
-    ok = slave_execute(Slave1, GetOther),
-    ok = slave_execute(Slave2, GetOther),
-
-    ok.
-
-%% custom conflict resolution for handle_conflict/0 test.
-handle_conflict(key, _Local, Remote) ->
-    {value, Remote};
-handle_conflict(other, _Local, _Remote) ->
-    {value, new}.
 
 %%%=============================================================================
 %%% Internal functions
