@@ -302,8 +302,7 @@ reduce(Node) ->
                 {atomic, ok} ->
                     ?INFO("Successfully disconnected from ~s~n", [Node]);
                 Error = {aborted, _} ->
-                    ?LBM_KV_DBG("Failed to remove schema from ~s: ~w~n",
-                                [Node, Error])
+                    ?INFO("Failed to remove schema from ~s: ~w~n", [Node, Error])
             end;
         false ->
             %% The disconnected node is not part of the seen `db_nodes' anymore,
