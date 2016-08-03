@@ -3,7 +3,7 @@
 %%%               |  o __   _|  _  __  |_   _       _ _   (TM)
 %%%               |_ | | | (_| (/_ | | |_) (_| |_| | | |
 %%%
-%%% @copyright (C) 2014, Lindenbaum GmbH
+%%% @copyright (C) 2014-2016, Lindenbaum GmbH
 %%%
 %%% Permission to use, copy, modify, and/or distribute this software for any
 %%% purpose with or without fee is hereby granted, provided that the above
@@ -206,19 +206,13 @@ distribute(Name) ->
 %% Start a slave node and setup its environment (code path, applications, ...).
 %%------------------------------------------------------------------------------
 slave_setup(Name) ->
-    {ok, Node} = slave:start_link(localhost, Name),
+    Arg = string:join(["-pa " ++ P || P <- code:get_path()], " "),
+    {ok, Node} = slave:start_link(localhost, Name, Arg),
+    %% Make sure slave node started correctly and is now connected
     true = lists:member(Node, nodes()),
-    slave_setup_env(Node),
+    %% Start the needed applications
+    ok = slave_execute(Node, fun() -> setup_apps() end),
     {ok, Node}.
-
-%%------------------------------------------------------------------------------
-%% @private
-%% Setup the slave node environment (code path, applications, ...).
-%%------------------------------------------------------------------------------
-slave_setup_env(Node) ->
-    Paths = code:get_path(),
-    ok = slave_execute(Node, fun() -> [code:add_patha(P)|| P <- Paths] end),
-    ok = slave_execute(Node, fun() -> setup_apps() end).
 
 %%------------------------------------------------------------------------------
 %% @private

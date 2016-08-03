@@ -1,5 +1,6 @@
 .eunit
 .rebar
-ebin
+_build
 deps
 doc
+ebin
