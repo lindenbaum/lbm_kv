@@ -21,7 +21,7 @@
  lbm_kv,
  [
   {description, "A simple, distributed, Mnesia-based key-value-store."},
-  {vsn, "0.0.2"},
+  {vsn, "0.0.3"},
   {registered,
    [
     lbm_kv_mon
