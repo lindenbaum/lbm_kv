@@ -65,4 +65,5 @@ resolved.
 Examples
 --------
 
-A simple example application is on its way and will be referenced here soon.
+A very simple example application/release can be found in the
+[samples](https://github.com/lindenbaum/lbm_kv/tree/master/samples) directory.
