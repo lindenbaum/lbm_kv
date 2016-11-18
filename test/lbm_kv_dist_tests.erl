@@ -18,7 +18,7 @@
 %%% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 %%%=============================================================================
 
--module(lbm_kv_dist_test).
+-module(lbm_kv_dist_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
