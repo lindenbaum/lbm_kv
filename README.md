@@ -65,5 +65,5 @@ resolved.
 Examples
 --------
 
-A very simple example application/release can be found in the
-[samples](https://github.com/lindenbaum/lbm_kv/tree/master/samples) directory.
+A very simple example application/release can be found
+[here](https://github.com/lindenbaum/sequencer_sample).
