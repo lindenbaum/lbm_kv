@@ -171,7 +171,7 @@ put(Table, Key, Value) -> ?MODULE:put(Table, [{Key, Value}]).
 put(_Table, []) ->
     {ok, []};
 put(Table, KeyValues) when is_list(KeyValues) ->
-    do(fun() -> strip(r_and_w(Table, KeyValues)) end).
+    do(fun() -> strip_l(r_and_w(Table, KeyValues)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -182,7 +182,7 @@ put(Table, KeyValues) when is_list(KeyValues) ->
 -spec del(table(), key() | [key()]) ->
                  {ok, [{key(), value()}]} | {error, term()}.
 del(_Table, [])       -> {ok, []};
-del(Table, KeyOrKeys) -> do(fun() -> strip(r_and_d(Table, KeyOrKeys)) end).
+del(Table, KeyOrKeys) -> do(fun() -> strip_l(r_and_d(Table, KeyOrKeys)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -201,7 +201,7 @@ get(Table, Key) -> get(Table, Key, transaction).
 -spec get(table(), key(), dirty | transaction) ->
                  {ok, [{key(), value()}]} | {error, term()}.
 get(Table, Key, dirty)       -> dirty_r(Table, Key);
-get(Table, Key, transaction) -> do(fun() -> strip(r(Table, Key, read)) end).
+get(Table, Key, transaction) -> do(fun() -> strip_l(r(Table, Key, read)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -243,7 +243,7 @@ match(Table, KeySpec, ValueSpec) ->
 match(Table, KeySpec, ValueSpec, dirty) ->
     dirty_m(Table, KeySpec, ValueSpec);
 match(Table, KeySpec, ValueSpec, transaction) ->
-    do(fun() -> strip(m(Table, KeySpec, ValueSpec, read)) end).
+    do(fun() -> strip_l(m(Table, KeySpec, ValueSpec, read)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -258,9 +258,10 @@ match(Table, KeySpec, ValueSpec, transaction) ->
 %% @end
 %%------------------------------------------------------------------------------
 -spec update(table(), update_fun()) ->
-                    {ok, [{key(), value()}]} | {error, term()}.
+                    {ok, [{key(), value()}], [{key(), value()}]} |
+                    {error, term()}.
 update(Table, Fun) when is_function(Fun) ->
-    do(fun() -> strip(u(Table, Fun)) end).
+    do(fun() -> strip_t(u(Table, Fun)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -274,13 +275,15 @@ update(Table, Fun) when is_function(Fun) ->
 %% To add or change a mapping return `{value, NewValue}'. Returning this with
 %% the old value will simply preserve the mapping. Returning anything else will
 %% remove the mapping from the table. {@link update/3} returns a list with the
-%% previous mappings for `Key'.
+%% previous mappings as well as a list of current mappings for `Key'. The form
+%% is `{ok, {OldMappings, NewMappings}}'
 %% @end
 %%------------------------------------------------------------------------------
 -spec update(table(), key(), update_fun()) ->
-                    {ok, [{key(), value()}]} | {error, term()}.
+                    {ok, {[{key(), value()}], [{key(), value()}]}} |
+                    {error, term()}.
 update(Table, Key, Fun) when is_function(Fun) ->
-    do(fun() -> strip(u(Table, Fun, Key)) end).
+    do(fun() -> strip_t(u(Table, Fun, Key)) end).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -384,7 +387,7 @@ dirty_m(Tab, KeySpec, ValueSpec) ->
                    [{key(), value()}] | {error, term()}.
 dirty(Tab, Key, Function) ->
     try mnesia:Function(Tab, Key) of
-        Records -> {ok, strip(Records)}
+        Records -> {ok, strip_l(Records)}
     catch
         exit:{aborted, Reason} -> {error, Reason}
     end.
@@ -475,17 +478,19 @@ r_and_w(Tab, Key, Val) ->
 %% Update the mappings for all `Key's in a table. Only allowed within
 %% transaction context.
 %%------------------------------------------------------------------------------
--spec u(table(), update_fun()) -> [#lbm_kv{}].
-u(Tab, Fun) -> lists:append([u(Tab, Fun, Key) || Key <- mnesia:all_keys(Tab)]).
+-spec u(table(), update_fun()) -> {[#lbm_kv{}], [#lbm_kv{}]}.
+u(Tab, Fun) ->
+    {A, B} = lists:unzip([u(Tab, Fun, Key) || Key <- mnesia:all_keys(Tab)]),
+    {lists:append(A), lists:append(B)}.
 
 %%------------------------------------------------------------------------------
 %% @private
 %% Update the mapping for `Key'. Only allowed within transaction context.
 %%------------------------------------------------------------------------------
--spec u(table(), update_fun(), key()) -> [#lbm_kv{}].
+-spec u(table(), update_fun(), key()) -> {[#lbm_kv{}], [#lbm_kv{}]}.
 u(Tab, Fun, Key) ->
     case r(Tab, Key, write) of
-        Records = [#lbm_kv{key = Key, val = Val, ver = Ver} | _] ->
+        Old = [#lbm_kv{key = Key, val = Val, ver = Ver} | _] ->
             case Fun(Key, {value, Val}) of
                 {value, Val} ->
                     ok; %% no change, no write
@@ -495,18 +500,25 @@ u(Tab, Fun, Key) ->
                 _ ->
                     ok = d(Tab, Key, write)
             end;
-        Records = [] ->
+        Old = [] ->
             case Fun(Key, undefined) of
                 {value, Val} ->
                     ok = w(Tab, Key, Val, lbm_kv_vclock:fresh());
                 _ ->
-                    ok
+                    ok %% delete on non-existent entry
             end
     end,
-    Records.
+    {Old, r(Tab, Key, read)}.
 
 %%------------------------------------------------------------------------------
 %% @private
 %%------------------------------------------------------------------------------
--spec strip([#lbm_kv{}]) -> [{key(), value()}].
-strip(Records) -> [{K, V} || #lbm_kv{key = K, val = V} <- Records].
+-spec strip_l([#lbm_kv{}]) -> [{key(), value()}].
+strip_l(Records) -> [{K, V} || #lbm_kv{key = K, val = V} <- Records].
+
+%%------------------------------------------------------------------------------
+%% @private
+%%------------------------------------------------------------------------------
+-spec strip_t({[#lbm_kv{}], [#lbm_kv{}]}) ->
+                     {[{key(), value()}], [{key(), value()}]}.
+strip_t({A, B}) -> {strip_l(A), strip_l(B)}.
