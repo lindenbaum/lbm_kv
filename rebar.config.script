@@ -18,7 +18,7 @@
 %%% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 %%%=============================================================================
 
-ProperGithub = {git, "https://github.com/manopapad/proper.git", {tag, "v1.1"}}.
+ProperGithub = {git, "https://github.com/manopapad/proper.git", {tag, "v1.2"}}.
 
 case erlang:function_exported(rebar3, main, 1) of
     true  ->
@@ -27,7 +27,7 @@ case erlang:function_exported(rebar3, main, 1) of
           [
            {test,
             [
-             {deps, [{proper, "1.1.0"}]},
+             {deps, [{proper, "1.2.0"}]},
              {proper_opts, [long_result, verbose]}
             ]}
           ]},
