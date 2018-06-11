@@ -26,16 +26,20 @@
 
 -define(NETSPLIT_EVENT, {mnesia_system_event, {inconsistent_database, _, _}}).
 
+-ifndef(EXCLUDE_FLAKY).
+-define(EXCLUDE_FLAKY, false).
+-endif.
+
 %%%=============================================================================
 %%% TESTS
 %%%=============================================================================
 
 all_test_() ->
-    {foreach, setup(), teardown(),
-     [
-      {timeout, 10, [fun unique_table/0]},
-      {timeout, 10, [fun simple_netsplit/0]}
-     ]}.
+    {foreach,
+     setup(),
+     teardown(),
+     [{timeout, 10, [fun unique_table/0]}]
+     ++ [{timeout, 10, [fun simple_netsplit/0]} || not ?EXCLUDE_FLAKY]}.
 
 unique_table() ->
     process_flag(trap_exit, true),

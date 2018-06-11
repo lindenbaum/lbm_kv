@@ -1,6 +1,6 @@
 language: erlang
 script:
-  - rebar3 eunit
+  - rebar3 as travis eunit
 otp_release:
   - 20.1
   - 19.3
