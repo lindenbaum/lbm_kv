@@ -3,5 +3,4 @@ script:
   - rebar3 as travis eunit
 otp_release:
   - 20.1
-  - 19.3
   - 18.3
