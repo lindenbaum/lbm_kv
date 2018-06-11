@@ -27,9 +27,9 @@
                 number() |
                 boolean() |
                 binary() |
-                tuple(safe()) |
-                tuple(safe(), safe()) |
-                tuple(safe(), safe(), safe()).
+                {safe()} |
+                {safe(), safe()} |
+                {safe(), safe(), safe()}.
 %% Unfortunately, Mnesia is quite picky when it comes to allowed types for
 %% keys and values, e.g. all special atoms of `match_specs' are not allowed and
 %% lead to undefined behaviour when used.
