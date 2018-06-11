@@ -3,7 +3,7 @@
 %%%               |  o __   _|  _  __  |_   _       _ _   (TM)
 %%%               |_ | | | (_| (/_ | | |_) (_| |_| | | |
 %%%
-%%% @copyright (C) 2014-2016, Lindenbaum GmbH
+%%% @copyright (C) 2014-2018, Lindenbaum GmbH
 %%%
 %%% Permission to use, copy, modify, and/or distribute this software for any
 %%% purpose with or without fee is hereby granted, provided that the above
