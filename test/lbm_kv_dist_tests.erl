@@ -126,7 +126,7 @@ simple_netsplit() ->
     ?assertEqual(ok, slave_execute(Slave2, PutValue0)),
 
     %% Read the values written before from all nodes
-    NumValues = length(nodes()) + 1,
+    NumValues = length([node()] ++ erlang:nodes()),
     GetValues = fun() ->
                         {ok, Vals} = lbm_kv:match_key(?TABLE, '_'),
                         NumValues = length(Vals)
