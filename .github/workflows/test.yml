@@ -1,0 +1,20 @@
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: OTP ${{matrix.otp_release}}
+    strategy:
+      matrix:
+        otp_release:
+          - 22.2
+          - 21.3
+          - 20.3
+          - 19.3.6.8
+          - 18.3.4.11
+    steps:
+      - uses: actions/checkout@v2.0.0
+      - uses: gleam-lang/setup-erlang@v1.1.2
+        with:
+          otp-version: ${{matrix.otp_release}}
+      - run: rebar3 as ci do eunit

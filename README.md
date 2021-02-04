@@ -1,4 +1,5 @@
-[![Build Status](https://travis-ci.org/lindenbaum/lbm_kv.png?branch=master)](https://travis-ci.org/lindenbaum/lbm_kv)
+[![Build Status](https://github.com/lindenbaum/lbm_kv/workflows/.github/workflows/test.yml/badge.svg?branch=master)](https://github.com/lindenbaum/lbm_kv/actions)
+[![Old Build Status (TRAVIS)](https://travis-ci.org/lindenbaum/lbm_kv.png?branch=master)](https://travis-ci.org/lindenbaum/lbm_kv)
 
 lbm_kv
 ======
